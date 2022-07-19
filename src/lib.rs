@@ -243,7 +243,24 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.pc += 1;
         }
         0x40..=0x75 | 0x77..=0x7f => {
+            // MOV
             state = emu8080_mov(state, op);
+        }
+        0x80..=0x87 => {
+            // ADD
+            state = emu8080_add(state, op - 0x80);
+        }
+        0x88..=0x8f => {
+            // ADC
+            state = emu8080_adc(state, op - 0x88);
+        }
+        0x90..=0x97 => {
+            // SUB
+            state = emu8080_sub(state, op - 0x90);
+        }
+        0x98..=0x9f => {
+            // SBB
+            state = emu8080_sbb(state, op - 0x98);
         }
         0xa7 => {
             // ANA A
@@ -381,6 +398,44 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
         }
         _ => panic!("Unimplemented Op code {:#04x}", op),
     };
+    state
+}
+
+fn emu8080_add(mut state: State8080, reg_index: u8) -> State8080 {
+    let a = state.a as u16;
+    let src = emu8080_mov_reg(&state, reg_index) as u16;
+    let answer = a + src;
+    state.a = answer as u8;
+    state.cc = calc_conditions(state.cc, answer);
+    state
+}
+
+fn emu8080_adc(mut state: State8080, reg_index: u8) -> State8080 {
+    let a = state.a as u16;
+    let src = emu8080_mov_reg(&state, reg_index) as u16;
+    let cy = state.cc.cy as u16;
+    let answer = a + src + cy;
+    state.a = answer as u8;
+    state.cc = calc_conditions(state.cc, answer);
+    state
+}
+
+fn emu8080_sub(mut state: State8080, reg_index: u8) -> State8080 {
+    let a = state.a as u16;
+    let src = emu8080_mov_reg(&state, reg_index) as u16;
+    let answer = do_sub(a, src);
+    state.a = answer as u8;
+    state.cc = calc_conditions(state.cc, answer);
+    state
+}
+
+fn emu8080_sbb(mut state: State8080, reg_index: u8) -> State8080 {
+    let a = state.a as u16;
+    let src = emu8080_mov_reg(&state, reg_index) as u16;
+    let cy = state.cc.cy as u16;
+    let answer = do_sub(a, src + cy);
+    state.a = answer as u8;
+    state.cc = calc_conditions(state.cc, answer);
     state
 }
 
