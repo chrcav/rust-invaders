@@ -314,6 +314,16 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.pc += 2;
             state = do_call(state, addr);
         }
+        0xce => {
+            // ACI D8
+            let a = state.a as u16;
+            let byte = state.memory[state.pc as usize] as u16;
+            state.pc += 1;
+            let cy = state.cc.cy as u16;
+            let answer = a + byte + cy;
+            state.a = answer as u8;
+            state.cc = calc_conditions(state.cc, answer);
+        }
         0xd1 => {
             // POP D
             state.e = state.memory[state.sp as usize];
@@ -330,6 +340,25 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.memory[state.sp as usize - 2] = state.e;
             state.memory[state.sp as usize - 1] = state.d;
             state.sp -= 2;
+        }
+        0xd6 => {
+            // SUI D8
+            let a = state.a as u16;
+            let byte = state.memory[state.pc as usize] as u16;
+            state.pc += 1;
+            let answer = do_sub(a, byte);
+            state.a = answer as u8;
+            state.cc = calc_conditions(state.cc, answer);
+        }
+        0xde => {
+            // SBI D8
+            let a = state.a as u16;
+            let byte = state.memory[state.pc as usize] as u16;
+            state.pc += 1;
+            let cy = state.cc.cy as u16;
+            let answer = do_sub(a, byte + cy);
+            state.a = answer as u8;
+            state.cc = calc_conditions(state.cc, answer);
         }
         0xe1 => {
             // POP H
@@ -359,6 +388,15 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.e = lreg;
             state.d = hreg;
         }
+        0xee => {
+            // XRI D8
+            let a = state.a as u16;
+            let byte = state.memory[state.pc as usize] as u16;
+            state.pc += 1;
+            let answer = a ^ byte;
+            state.a = answer as u8;
+            state.cc = calc_conditions(state.cc, answer);
+        }
         0xf1 => {
             // POP PSW
             let psw = state.memory[state.sp as usize];
@@ -384,6 +422,15 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.memory[state.sp as usize - 1] = state.a;
             state.sp -= 2;
         }
+        0xf6 => {
+            // ORI D8
+            let a = state.a as u16;
+            let byte = state.memory[state.pc as usize] as u16;
+            state.pc += 1;
+            let answer = a | byte;
+            state.a = answer as u8;
+            state.cc = calc_conditions(state.cc, answer);
+        }
         0xfb => {
             // EI
             state.int_enable = 1;
@@ -391,9 +438,9 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
         0xfe => {
             // CPI D8  2 Z, S, P, CY, AC A - data
             let a = state.a as u16;
-            let data = state.memory[state.pc as usize] as u16;
+            let byte = state.memory[state.pc as usize] as u16;
             state.pc += 1;
-            let answer = do_sub(a, data);
+            let answer = do_sub(a, byte);
             state.cc = calc_conditions(state.cc, answer);
         }
         _ => panic!("Unimplemented Op code {:#04x}", op),
