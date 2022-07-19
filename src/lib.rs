@@ -269,18 +269,9 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.b = state.memory[state.sp as usize + 1];
             state.sp += 2;
         }
-        0xc2 => {
-            // JNZ addr
-            if state.cc.z == 0 {
-                state.pc = get_addr_from_bytes(state.pc as usize, &state.memory);
-            } else {
-                state.pc += 2;
-            }
-        }
-        0xc3 => {
+        0xc2 | 0xc3 | 0xca | 0xd2 | 0xda | 0xe2 | 0xea | 0xf2 | 0xfa => {
             // JMP ${addr}
-            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
-            state.pc = addr;
+            state = emu8080_jmp(state, op);
         }
         0xc5 => {
             // PUSH B
@@ -390,6 +381,82 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
         }
         _ => panic!("Unimplemented Op code {:#04x}", op),
     };
+    state
+}
+
+fn emu8080_jmp(mut state: State8080, op: u8) -> State8080 {
+    match op {
+        0xc2 => {
+            // JNZ addr
+            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
+            state.pc += 2;
+            if state.cc.z == 0 {
+                state.pc = addr;
+            }
+        }
+        0xc3 => {
+            // JMP ${addr}
+            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
+            state.pc = addr;
+        }
+        0xca => {
+            // JZ addr
+            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
+            state.pc += 2;
+            if state.cc.z == 1 {
+                state.pc = addr;
+            }
+        }
+        0xd2 => {
+            // JNC addr
+            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
+            state.pc += 2;
+            if state.cc.cy == 0 {
+                state.pc = addr;
+            }
+        }
+        0xda => {
+            // JC addr
+            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
+            state.pc += 2;
+            if state.cc.cy == 1 {
+                state.pc = addr;
+            }
+        }
+        0xe2 => {
+            // JPO addr
+            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
+            state.pc += 2;
+            if state.cc.p == 0 {
+                state.pc = addr;
+            }
+        }
+        0xea => {
+            // JPE addr
+            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
+            state.pc += 2;
+            if state.cc.p == 1 {
+                state.pc = addr;
+            }
+        }
+        0xf2 => {
+            // JP addr
+            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
+            state.pc += 2;
+            if state.cc.s == 0 {
+                state.pc = addr;
+            }
+        }
+        0xfa => {
+            // JM addr
+            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
+            state.pc += 2;
+            if state.cc.s == 1 {
+                state.pc = addr;
+            }
+        }
+        _ => panic!("Unimplemented JMP Op code {:#04x}", op),
+    }
     state
 }
 
