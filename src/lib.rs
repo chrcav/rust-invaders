@@ -112,17 +112,17 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.c = state.memory[state.pc as usize];
             state.pc += 2;
         }
-        0x04 => {
-            //INR B
-            let answer = state.b as u16 + 1;
-            state.b = answer as u8;
-            state.cc = calc_conditions(state.cc, answer);
+        0x03 | 0x13 | 0x23 | 0x33 => {
+            // INX *
+            state = emu8080_inx(state, op);
         }
-        0x05 => {
-            //DCR B
-            let answer = do_sub(state.b as u16, 1);
-            state.b = answer as u8;
-            state.cc = calc_conditions(state.cc, answer);
+        0x04 | 0x0c | 0x14 | 0x1c | 0x24 | 0x2c | 0x34 | 0x3c => {
+            //INR *
+            state = emu8080_inr(state, op);
+        }
+        0x05 | 0x0d | 0x15 | 0x1d | 0x25 | 0x2d | 0x35 | 0x3d => {
+            //DCR *
+            state = emu8080_dcr(state, op);
         }
         0x06 => {
             // MVI B, D8
@@ -138,18 +138,9 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.l = answer as u8;
             state.cc.cy = (answer > 0xff) as u8;
         }
-        0x0d => {
-            // DCR C
-            let answer = if state.c == 0 {
-                255 as u16
-            } else {
-                state.c as u16 - 1
-            };
-            state.cc.z = (answer & 0xff == 0) as u8;
-            state.cc.s = (answer & 0x08 != 1) as u8;
-            //state.cc.cy = (answer > 0xff) as u8;
-            state.cc.p = calc_parity((answer & 0xff) as u8);
-            state.c = answer as u8;
+        0x0b | 0x1b | 0x2b | 0x3b => {
+            // DCX *
+            state = emu8080_dcx(state, op);
         }
         0x0e => {
             // MVI C,D8
@@ -168,14 +159,6 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.d = state.memory[state.pc as usize + 1];
             state.e = state.memory[state.pc as usize];
             state.pc += 2;
-        }
-        0x13 => {
-            //INX D
-            let mut answer = (state.d as u16) << 8;
-            answer |= state.e as u16;
-            answer += 1;
-            state.e = answer as u8;
-            state.d = (answer >> 8) as u8
         }
         0x19 => {
             // DAD D
@@ -197,10 +180,6 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.h = state.memory[state.pc as usize + 1];
             state.l = state.memory[state.pc as usize];
             state.pc += 2;
-        }
-        0x23 => {
-            //INX H
-            state.h = if state.h == 255 { 0 } else { state.h + 1 }
         }
         0x26 => {
             // MVI H,D8
@@ -263,10 +242,18 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             // SBB
             state = emu8080_sbb(state, op - 0x98);
         }
+        // 0xa0..=0xa7 => {
         // ANA
+        // }
+        // 0xa8..=0xaf => {
         // XRA
+        // }
+        // 0xb0..=0xb7 => {
         // ORA
+        // }
+        // 0xb8..=0xbf => {
         // CMP
+        // }
         0xa7 => {
             // ANA A
             let answer = state.a as u16 & state.a as u16;
@@ -284,6 +271,10 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.c = state.memory[state.sp as usize];
             state.b = state.memory[state.sp as usize + 1];
             state.sp += 2;
+        }
+        0xc0 | 0xc8 | 0xc9 | 0xd0 | 0xd8 | 0xe0 | 0xe8 | 0xf0 | 0xf8 => {
+            // RET
+            state = emu8080_ret(state, op);
         }
         0xc2 | 0xc3 | 0xca | 0xd2 | 0xda | 0xe2 | 0xea | 0xf2 | 0xfa => {
             // JMP ${addr}
@@ -307,10 +298,6 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             let answer = a + byte;
             state.a = answer as u8;
             state.cc = calc_conditions(state.cc, answer);
-        }
-        0xc9 => {
-            // RET
-            state = do_return(state);
         }
         0xce => {
             // ACI D8
@@ -455,6 +442,192 @@ fn emu8080_add(mut state: State8080, reg_index: u8) -> State8080 {
     state
 }
 
+fn emu8080_inx(mut state: State8080, op: u8) -> State8080 {
+    match op {
+        0x03 => {
+            // INX B
+            let mut bc = (state.b as u16) << 8;
+            bc |= state.c as u16;
+            let answer = bc + 1;
+            state.b = (answer >> 8) as u8;
+            state.c = answer as u8;
+        }
+        0x13 => {
+            // INX D
+            let mut de = (state.d as u16) << 8;
+            de |= state.e as u16;
+            let answer = de + 1;
+            state.d = (answer >> 8) as u8;
+            state.e = answer as u8;
+        }
+        0x23 => {
+            // INX H
+            let mut hl = (state.h as u16) << 8;
+            hl |= state.l as u16;
+            let answer = hl + 1;
+            state.h = (answer >> 8) as u8;
+            state.l = answer as u8;
+        }
+        0x33 => {
+            // INX SP
+            let sp = state.sp;
+            let answer = sp + 1;
+            state.sp = answer;
+        }
+        _ => panic!("Unimplemented INX Op code {:#04x}", op),
+    }
+    state
+}
+
+fn emu8080_dcx(mut state: State8080, op: u8) -> State8080 {
+    match op {
+        0x0b => {
+            // DCX B
+            let mut bc = (state.b as u16) << 8;
+            bc |= state.c as u16;
+            let answer = do_sub(bc, 1);
+            state.b = (answer >> 8) as u8;
+            state.c = answer as u8;
+        }
+        0x1b => {
+            // DCX D
+            let mut de = (state.d as u16) << 8;
+            de |= state.e as u16;
+            let answer = do_sub(de, 1);
+            state.d = (answer >> 8) as u8;
+            state.e = answer as u8;
+        }
+        0x2b => {
+            // DCX H
+            let mut hl = (state.h as u16) << 8;
+            hl |= state.l as u16;
+            let answer = do_sub(hl, 1);
+            state.h = (answer >> 8) as u8;
+            state.l = answer as u8;
+        }
+        0x3b => {
+            // DCX SP
+            let sp = state.sp;
+            let answer = do_sub(sp, 1);
+            state.sp = answer;
+        }
+        _ => panic!("Unimplemented DCX Op code {:#04x}", op),
+    }
+    state
+}
+
+fn emu8080_inr(mut state: State8080, op: u8) -> State8080 {
+    match op {
+        0x04 => {
+            // INR B
+            let b = state.b as u16;
+            let answer = b + 1;
+            state.b = answer as u8;
+            state.cc = calc_conditions(state.cc, answer & 0xff);
+        }
+        0x0c => {
+            // INR C
+            let c = state.c as u16;
+            let answer = c + 1;
+            state.c = answer as u8;
+            state.cc = calc_conditions(state.cc, answer & 0xff);
+        }
+        0x14 => {
+            // INR D
+            let d = state.d as u16;
+            let answer = d + 1;
+            state.d = answer as u8;
+            state.cc = calc_conditions(state.cc, answer & 0xff);
+        }
+        0x1c => {
+            // INR E
+            let e = state.e as u16;
+            let answer = e + 1;
+            state.e = answer as u8;
+            state.cc = calc_conditions(state.cc, answer & 0xff);
+        }
+        0x24 => {
+            // INR H
+            let h = state.h as u16;
+            let answer = h + 1;
+            state.h = answer as u8;
+            state.cc = calc_conditions(state.cc, answer & 0xff);
+        }
+        0x2c => {
+            // INR L
+            let l = state.l as u16;
+            let answer = l + 1;
+            state.l = answer as u8;
+            state.cc = calc_conditions(state.cc, answer & 0xff);
+        }
+        0x3c => {
+            // INR A
+            let a = state.a as u16;
+            let answer = a + 1;
+            state.a = answer as u8;
+            state.cc = calc_conditions(state.cc, answer & 0xff);
+        }
+        _ => panic!("Unimplemented INR Op code {:#04x}", op),
+    }
+    state
+}
+
+fn emu8080_dcr(mut state: State8080, op: u8) -> State8080 {
+    match op {
+        0x05 => {
+            // DCR B
+            let b = state.b as u16;
+            let answer = do_sub(b, 1);
+            state.b = answer as u8;
+            state.cc = calc_conditions(state.cc, answer & 0xff);
+        }
+        0x0d => {
+            // DCR C
+            let c = state.c as u16;
+            let answer = do_sub(c, 1);
+            state.c = answer as u8;
+            state.cc = calc_conditions(state.cc, answer & 0xff);
+        }
+        0x15 => {
+            // DCR D
+            let d = state.d as u16;
+            let answer = do_sub(d, 1);
+            state.d = answer as u8;
+            state.cc = calc_conditions(state.cc, answer & 0xff);
+        }
+        0x1d => {
+            // DCR E
+            let e = state.e as u16;
+            let answer = do_sub(e, 1);
+            state.e = answer as u8;
+            state.cc = calc_conditions(state.cc, answer & 0xff);
+        }
+        0x25 => {
+            // DCR H
+            let h = state.h as u16;
+            let answer = do_sub(h, 1);
+            state.h = answer as u8;
+            state.cc = calc_conditions(state.cc, answer & 0xff);
+        }
+        0x2d => {
+            // DCR L
+            let l = state.l as u16;
+            let answer = do_sub(l, 1);
+            state.l = answer as u8;
+            state.cc = calc_conditions(state.cc, answer & 0xff);
+        }
+        0x3d => {
+            // DCR A
+            let a = state.a as u16;
+            let answer = do_sub(a, 1);
+            state.a = answer as u8;
+            state.cc = calc_conditions(state.cc, answer & 0xff);
+        }
+        _ => panic!("Unimplemented DCR Op code {:#04x}", op),
+    }
+    state
+}
+
 fn emu8080_adc(mut state: State8080, reg_index: u8) -> State8080 {
     let a = state.a as u16;
     let src = emu8080_mov_reg(&state, reg_index) as u16;
@@ -491,7 +664,7 @@ fn emu8080_call(mut state: State8080, op: u8) -> State8080 {
             let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
             state.pc += 2;
             if state.cc.z == 0 {
-                state.pc = addr;
+                state = do_call(state, addr);
             }
         }
         0xcc => {
@@ -505,6 +678,7 @@ fn emu8080_call(mut state: State8080, op: u8) -> State8080 {
         0xcd => {
             // CALL ${addr}
             let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
+            state.pc += 2;
             state = do_call(state, addr);
         }
         0xd4 => {
@@ -555,7 +729,7 @@ fn emu8080_call(mut state: State8080, op: u8) -> State8080 {
                 state = do_call(state, addr);
             }
         }
-        _ => panic!("Unimplemented JMP Op code {:#04x}", op),
+        _ => panic!("Unimplemented CALL Op code {:#04x}", op),
     }
     state
 }
@@ -632,6 +806,65 @@ fn emu8080_jmp(mut state: State8080, op: u8) -> State8080 {
             }
         }
         _ => panic!("Unimplemented JMP Op code {:#04x}", op),
+    }
+    state
+}
+
+fn emu8080_ret(mut state: State8080, op: u8) -> State8080 {
+    match op {
+        0xc0 => {
+            // RNZ
+            if state.cc.z == 0 {
+                state = do_return(state);
+            }
+        }
+        0xc8 => {
+            // RZ
+            if state.cc.z == 1 {
+                state = do_return(state);
+            }
+        }
+        0xc9 => {
+            // RET
+            state = do_return(state);
+        }
+        0xd0 => {
+            // RNC
+            if state.cc.cy == 0 {
+                state = do_return(state);
+            }
+        }
+        0xd8 => {
+            // RC
+            if state.cc.cy == 1 {
+                state = do_return(state);
+            }
+        }
+        0xe0 => {
+            // RPO
+            if state.cc.p == 0 {
+                state = do_return(state);
+            }
+        }
+        0xe8 => {
+            // RPE
+            if state.cc.p == 1 {
+                state = do_return(state);
+            }
+        }
+        0xf0 => {
+            // RP
+            if state.cc.s == 0 {
+                state = do_return(state);
+            }
+        }
+        0xf8 => {
+            // RM
+            if state.cc.s == 1 {
+                state = do_return(state);
+            }
+        }
+        _ => panic!("Unimplemented RET Op code {:#04x}", op),
     }
     state
 }
