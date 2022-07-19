@@ -289,6 +289,10 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             // JMP ${addr}
             state = emu8080_jmp(state, op);
         }
+        0xc4 | 0xcc | 0xcd | 0xd4 | 0xdc | 0xe4 | 0xec | 0xf4 | 0xfc => {
+            // CALL ${addr}
+            state = emu8080_call(state, op);
+        }
         0xc5 => {
             // PUSH B
             state.memory[state.sp as usize - 2] = state.c;
@@ -307,12 +311,6 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
         0xc9 => {
             // RET
             state = do_return(state);
-        }
-        0xcd => {
-            // CALL ${addr}
-            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
-            state.pc += 2;
-            state = do_call(state, addr);
         }
         0xce => {
             // ACI D8
@@ -483,6 +481,82 @@ fn emu8080_sbb(mut state: State8080, reg_index: u8) -> State8080 {
     let answer = do_sub(a, src + cy);
     state.a = answer as u8;
     state.cc = calc_conditions(state.cc, answer);
+    state
+}
+
+fn emu8080_call(mut state: State8080, op: u8) -> State8080 {
+    match op {
+        0xc4 => {
+            // CNZ addr
+            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
+            state.pc += 2;
+            if state.cc.z == 0 {
+                state.pc = addr;
+            }
+        }
+        0xcc => {
+            // CZ addr
+            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
+            state.pc += 2;
+            if state.cc.z == 1 {
+                state = do_call(state, addr);
+            }
+        }
+        0xcd => {
+            // CALL ${addr}
+            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
+            state = do_call(state, addr);
+        }
+        0xd4 => {
+            // CNC addr
+            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
+            state.pc += 2;
+            if state.cc.cy == 0 {
+                state = do_call(state, addr);
+            }
+        }
+        0xdc => {
+            // CC addr
+            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
+            state.pc += 2;
+            if state.cc.cy == 1 {
+                state = do_call(state, addr);
+            }
+        }
+        0xe4 => {
+            // CPO addr
+            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
+            state.pc += 2;
+            if state.cc.p == 0 {
+                state = do_call(state, addr);
+            }
+        }
+        0xec => {
+            // CPE addr
+            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
+            state.pc += 2;
+            if state.cc.p == 1 {
+                state = do_call(state, addr);
+            }
+        }
+        0xf4 => {
+            // CP addr
+            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
+            state.pc += 2;
+            if state.cc.s == 0 {
+                state = do_call(state, addr);
+            }
+        }
+        0xfc => {
+            // CM addr
+            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
+            state.pc += 2;
+            if state.cc.s == 1 {
+                state = do_call(state, addr);
+            }
+        }
+        _ => panic!("Unimplemented JMP Op code {:#04x}", op),
+    }
     state
 }
 
