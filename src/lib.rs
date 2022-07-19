@@ -88,13 +88,14 @@ pub fn create_initial_emustate(filename: &str, start_pc: u16) -> std::io::Result
 pub fn emu8080(mut state: State8080) -> std::io::Result<()> {
     loop {
         let op = state.memory[state.pc as usize];
+        println!("start state: {:02x} {}{}", op, state, state.cc);
         state.pc += 1;
         match op {
             _ => {
                 state = emu8080_opcode(state, op);
             }
         };
-        println!("{:02x} {}{}", op, state, state.cc);
+        println!("end state: {:02x} {}{}", op, state, state.cc);
         if state.pc as usize >= state.memory.len() {
             break;
         }
@@ -262,23 +263,21 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             // SBB
             state = emu8080_sbb(state, op - 0x98);
         }
+        // ANA
+        // XRA
+        // ORA
+        // CMP
         0xa7 => {
             // ANA A
             let answer = state.a as u16 & state.a as u16;
             state.a = answer as u8;
-            state.cc.z = (answer & 0xff == 0) as u8;
-            state.cc.s = (answer & 0x08 != 1) as u8;
-            state.cc.cy = (answer > 0xff) as u8;
-            state.cc.p = calc_parity((answer & 0xff) as u8);
+            state.cc = calc_conditions(state.cc, answer);
         }
         0xaf => {
             // XRA A
             let answer = state.a as u16 ^ state.a as u16;
             state.a = answer as u8;
-            state.cc.z = (answer & 0xff == 0) as u8;
-            state.cc.s = (answer & 0x08 != 1) as u8;
-            state.cc.cy = (answer > 0xff) as u8;
-            state.cc.p = calc_parity((answer & 0xff) as u8);
+            state.cc = calc_conditions(state.cc, answer);
         }
         0xc1 => {
             // POP B
@@ -300,6 +299,7 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             // ADI D8
             let a = state.a as u16;
             let byte = state.memory[state.pc as usize] as u16;
+            state.pc += 1;
             let answer = a + byte;
             state.a = answer as u8;
             state.cc = calc_conditions(state.cc, answer);
@@ -533,7 +533,7 @@ fn emu8080_mov(mut state: State8080, op: u8) -> State8080 {
             // MOV L, A
             state.l = emu8080_mov_reg(&state, op - 0x68);
         }
-        0x77 => {
+        0x70..=0x77 => {
             // MOV M, A
             let mut addr = (state.h as u16) << 8;
             addr |= state.l as u16;
@@ -636,5 +636,6 @@ fn get_addr_from_bytes(i: usize, memory: &Vec<u8>) -> u16 {
     let mut addr: u16 = memory[i + 1] as u16;
     addr = addr << 8;
     addr |= memory[i] as u16;
+    println!("{:04x}", addr);
     addr
 }
