@@ -32,8 +32,8 @@ pub struct State8080 {
     h: u8,
     l: u8,
     sp: u16,
-    pub pc: u16,
-    memory: Vec<u8>,
+    pc: u16,
+    pub memory: Vec<u8>,
     cc: ConditionCodes,
     int_enable: u8,
 }
@@ -75,6 +75,9 @@ pc {:04x} sp {:04x}
 pub fn create_initial_emustate(filename: &str, start_pc: u16) -> std::io::Result<State8080> {
     let mut f = std::fs::File::open(filename)?;
     let mut state = State8080::new();
+    state
+        .memory
+        .resize_with(start_pc as usize, Default::default);
     // read the whole file
     f.read_to_end(&mut state.memory)?;
     state.memory.resize_with(65535, Default::default);
@@ -91,7 +94,7 @@ pub fn emu8080(mut state: State8080) -> std::io::Result<()> {
                 state = emu8080_opcode(state, op);
             }
         };
-        println!("{:02x} {}", op, state);
+        println!("{:02x} {}{}", op, state, state.cc);
         if state.pc as usize >= state.memory.len() {
             break;
         }
@@ -334,7 +337,7 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
         }
         0xe6 => {
             // ANI D8
-            let answer = (state.memory[state.pc as usize] & state.a);
+            let answer = state.memory[state.pc as usize] & state.a;
             state.pc += 1;
             state.a = answer as u8;
             state.cc = calc_conditions(state.cc, answer as u16);
@@ -504,7 +507,7 @@ fn calc_parity(val: u8) -> u8 {
             one_bits += 1;
         }
     }
-    one_bits / 2
+    (one_bits % 2 == 0) as u8
 }
 
 fn get_addr_from_bytes(i: usize, memory: &Vec<u8>) -> u16 {
