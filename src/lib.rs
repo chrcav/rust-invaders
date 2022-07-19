@@ -239,51 +239,8 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.a = state.memory[state.pc as usize];
             state.pc += 1;
         }
-        0x56 => {
-            // MOV D, M
-            let mut addr = (state.h as u16) << 8;
-            addr |= state.l as u16;
-            state.d = state.memory[addr as usize];
-        }
-        0x5e => {
-            // MOV E, M
-            let mut addr = (state.h as u16) << 8;
-            addr |= state.l as u16;
-            state.e = state.memory[addr as usize];
-        }
-        0x66 => {
-            // MOV H, M
-            let mut addr = (state.h as u16) << 8;
-            addr |= state.l as u16;
-            state.h = state.memory[addr as usize];
-        }
-        0x6f => {
-            // MOV L, A
-            state.l = state.a;
-        }
-        0x77 => {
-            // MOV M, A
-            let mut addr = (state.h as u16) << 8;
-            addr |= state.l as u16;
-            state.memory[addr as usize] = state.c;
-        }
-        0x7a => {
-            // MOV A, D
-            state.a = state.d;
-        }
-        0x7b => {
-            // MOV A, E
-            state.a = state.e;
-        }
-        0x7c => {
-            // MOV A, H
-            state.a = state.h;
-        }
-        0x7e => {
-            // MOV A, M
-            let mut addr = (state.h as u16) << 8;
-            addr |= state.l as u16;
-            state.a = state.memory[addr as usize];
+        0x40..=0x75 | 0x77..=0x7f => {
+            state = emu8080_mov(state, op);
         }
         0xa7 => {
             // ANA A
@@ -431,6 +388,80 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
         _ => panic!("Unimplemented Op code {:#04x}", op),
     };
     state
+}
+
+fn emu8080_mov(mut state: State8080, op: u8) -> State8080 {
+    match op {
+        0x56 => {
+            // MOV D, M
+            state.d = emu8080_mov_reg(&state, op - 0x50);
+        }
+        0x5e => {
+            // MOV E, M
+            state.e = emu8080_mov_reg(&state, op - 0x58);
+        }
+        0x66 => {
+            // MOV H, M
+            state.h = emu8080_mov_reg(&state, op - 0x60);
+        }
+        0x6f => {
+            // MOV L, A
+            state.l = emu8080_mov_reg(&state, op - 0x68);
+        }
+        0x77 => {
+            // MOV M, A
+            let mut addr = (state.h as u16) << 8;
+            addr |= state.l as u16;
+            state.memory[addr as usize] = emu8080_mov_reg(&state, op - 0x70);
+        }
+        0x78..=0x7f => {
+            // MOV A, *
+            state.a = emu8080_mov_reg(&state, op - 0x78);
+        }
+        _ => panic!("Unimplemented MOV Op code {:#04x}", op),
+    }
+
+    state
+}
+
+fn emu8080_mov_reg(state: &State8080, reg_index: u8) -> u8 {
+    match reg_index {
+        0x0 => {
+            // MOV _, B
+            state.b
+        }
+        0x1 => {
+            // MOV _, C
+            state.c
+        }
+        0x2 => {
+            // MOV _, D
+            state.d
+        }
+        0x3 => {
+            // MOV _, E
+            state.e
+        }
+        0x4 => {
+            // MOV _, H
+            state.h
+        }
+        0x5 => {
+            // MOV _, L
+            state.l
+        }
+        0x6 => {
+            // MOV _, M
+            let mut addr = (state.h as u16) << 8;
+            addr |= state.l as u16;
+            state.memory[addr as usize]
+        }
+        0x7 => {
+            // MOV _, A
+            state.a
+        }
+        _ => panic!("Non-existent reg index {:#04x}", reg_index),
+    }
 }
 
 fn do_sub(mut a: u16, b: u16) -> u16 {
