@@ -112,6 +112,11 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.c = state.memory[state.pc as usize];
             state.pc += 2;
         }
+        0x02 => {
+            // STAX B
+            let addr = addr_from_reg_pair(state.b, state.c);
+            state.a = state.memory[addr as usize];
+        }
         0x03 | 0x13 | 0x23 | 0x33 => {
             // INX *
             state = emu8080_inx(state, op);
@@ -128,36 +133,61 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             // MVI *, D8
             state = emu8080_mvi(state, op);
         }
+        0x07 => {
+            // RLC
+            let mut a = state.a as u16;
+            let bit7 = (a >> 7) & 0x1;
+            a = a << 1;
+            a |= bit7;
+            state.cc.cy = bit7 as u8;
+            state.a = a as u8;
+        }
         0x09 => {
             // DAD B
-            let bc = (state.b as u32) << 8 | state.c as u32;
-            let hl = (state.h as u32) << 8 | state.l as u32;
+            let bc = addr_from_reg_pair(state.b, state.c) as u32;
+            let hl = addr_from_reg_pair(state.h, state.l) as u32;
             let answer = hl + bc;
             state.h = (answer >> 8) as u8;
             state.l = answer as u8;
             state.cc.cy = (answer > 0xff) as u8;
         }
+        0x0a => {
+            // LDAX B
+            let addr = addr_from_reg_pair(state.b, state.c);
+            state.a = state.memory[addr as usize];
+        }
         0x0b | 0x1b | 0x2b | 0x3b => {
             // DCX *
             state = emu8080_dcx(state, op);
         }
-        0x0e => {
-            // MVI C,D8
-            state.c = state.memory[state.pc as usize];
-            state.pc += 1;
-        }
         0x0f => {
             // RRC
-            let bit0 = 0x1 & state.a;
-            state.a = state.a >> 1;
-            state.a = state.a | bit0 << 7;
+            let mut a = state.a;
+            let bit0 = a & 0x1;
+            a = a >> 1;
+            a |= bit0 << 7;
             state.cc.cy = bit0;
+            state.a = a;
         }
         0x11 => {
             // LXI D, D16
             state.d = state.memory[state.pc as usize + 1];
             state.e = state.memory[state.pc as usize];
             state.pc += 2;
+        }
+        0x12 => {
+            // STAX D
+            let addr = addr_from_reg_pair(state.d, state.e);
+            state.a = state.memory[addr as usize];
+        }
+        0x17 => {
+            // RAL
+            let mut a = state.a as u16;
+            let bit7 = (a >> 7) & 0x1;
+            a = a << 1;
+            a |= state.cc.cy as u16 & 0x1;
+            state.cc.cy = bit7 as u8;
+            state.a = a as u8;
         }
         0x19 => {
             // DAD D
@@ -170,15 +200,31 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
         }
         0x1a => {
             // LDAX D
-            let mut addr = (state.d as u16) << 8;
-            addr |= state.e as u16;
+            let addr = addr_from_reg_pair(state.d, state.e);
             state.a = state.memory[addr as usize];
+        }
+        0x1f => {
+            // RAR
+            let mut a = state.a;
+            let bit0 = a & 0x1;
+            let bit7 = (a >> 7) & 0x1;
+            a = a >> 1;
+            a |= bit7 << 7;
+            state.cc.cy = bit0 as u8;
+            state.a = a as u8;
         }
         0x21 => {
             // LXI H, D16
             state.h = state.memory[state.pc as usize + 1];
             state.l = state.memory[state.pc as usize];
             state.pc += 2;
+        }
+        0x22 => {
+            // SHLD ${addr}
+            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
+            state.pc += 2;
+            state.memory[addr as usize] = state.l;
+            state.memory[addr as usize + 1] = state.h;
         }
         0x29 => {
             // DAD H
@@ -187,6 +233,17 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.h = (answer >> 8) as u8;
             state.l = answer as u8;
             state.cc.cy = (answer > 0xff) as u8;
+        }
+        0x2a => {
+            // LHLD ${addr}
+            let addr = get_addr_from_bytes(state.pc as usize, &state.memory) as usize;
+            state.pc += 2;
+            state.l = state.memory[addr];
+            state.h = state.memory[addr + 1];
+        }
+        0x2f => {
+            // CMA
+            state.a ^= 0xff;
         }
         0x31 => {
             // LXI SP, D16
@@ -199,11 +256,28 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.memory[addr as usize] = state.a;
             state.pc += 2;
         }
+        0x37 => {
+            // STC
+            state.cc.cy = 1;
+        }
+        0x39 => {
+            // DAD SP
+            let hl = (state.h as u32) << 8 | state.l as u32;
+            let sp = state.sp as u32;
+            let answer = hl + sp;
+            state.h = (answer >> 8) as u8;
+            state.l = answer as u8;
+            state.cc.cy = (answer > 0xff) as u8;
+        }
         0x3a => {
             // LDA adr
             let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
             state.a = state.memory[addr as usize];
             state.pc += 2;
+        }
+        0x3f => {
+            // CMC
+            state.cc.cy ^= 0x1;
         }
         0x40..=0x75 | 0x77..=0x7f => {
             // MOV
@@ -292,11 +366,21 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.h = state.memory[state.sp as usize + 1];
             state.sp += 2;
         }
+        0xe3 => {
+            // XHTL
+            state.l = state.memory[state.sp as usize];
+            state.h = state.memory[state.sp as usize + 1];
+        }
         0xe5 => {
             // PUSH H
             state.memory[state.sp as usize - 2] = state.l;
             state.memory[state.sp as usize - 1] = state.h;
             state.sp -= 2;
+        }
+        0xf9 => {
+            // PCHL
+            let addr = addr_from_reg_pair(state.h, state.l);
+            state.pc = addr;
         }
         0xeb => {
             // XCHG
@@ -331,6 +415,11 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
                 | state.cc.ac << 4;
             state.memory[state.sp as usize - 1] = state.a;
             state.sp -= 2;
+        }
+        0xf9 => {
+            // SPHL
+            let addr = addr_from_reg_pair(state.h, state.l);
+            state.sp = addr;
         }
         0xfb => {
             // EI
@@ -468,6 +557,14 @@ fn emu8080_inr(mut state: State8080, op: u8) -> State8080 {
             state.l = answer as u8;
             state.cc = calc_conditions(state.cc, answer & 0xff);
         }
+        0x34 => {
+            // INR M
+            let addr = addr_from_reg_pair(state.h, state.l);
+            let m = state.memory[addr as usize] as u16;
+            let answer = m + 1;
+            state.memory[addr as usize] = answer as u8;
+            state.cc = calc_conditions(state.cc, answer & 0xff);
+        }
         0x3c => {
             // INR A
             let a = state.a as u16;
@@ -522,6 +619,14 @@ fn emu8080_dcr(mut state: State8080, op: u8) -> State8080 {
             let l = state.l as u16;
             let answer = do_sub(l, 1);
             state.l = answer as u8;
+            state.cc = calc_conditions(state.cc, answer & 0xff);
+        }
+        0x35 => {
+            // DCR M
+            let addr = addr_from_reg_pair(state.h, state.l);
+            let m = state.memory[addr as usize] as u16;
+            let answer = do_sub(m, 1);
+            state.memory[addr as usize] = answer as u8;
             state.cc = calc_conditions(state.cc, answer & 0xff);
         }
         0x3d => {
@@ -922,8 +1027,7 @@ fn emu8080_mov(mut state: State8080, op: u8) -> State8080 {
         }
         0x70..=0x77 => {
             // MOV M, *
-            let mut addr = (state.h as u16) << 8;
-            addr |= state.l as u16;
+            let addr = addr_from_reg_pair(state.h, state.l);
             state.memory[addr as usize] = emu8080_mov_reg(&state, op - 0x70);
         }
         0x78..=0x7f => {
@@ -964,8 +1068,7 @@ fn emu8080_mov_reg(state: &State8080, reg_index: u8) -> u8 {
         }
         0x6 => {
             // MOV _, M
-            let mut addr = (state.h as u16) << 8;
-            addr |= state.l as u16;
+            let addr = addr_from_reg_pair(state.h, state.l);
             state.memory[addr as usize]
         }
         0x7 => {
@@ -991,8 +1094,7 @@ fn do_call(mut state: State8080, addr: u16) -> State8080 {
     state
 }
 fn do_return(mut state: State8080) -> State8080 {
-    let mut addr = (state.memory[(state.sp as usize) + 1] as u16) << 8;
-    addr |= state.memory[state.sp as usize] as u16;
+    let addr = get_addr_from_bytes(state.sp as usize, &state.memory);
     state.pc = addr;
     state.sp += 2;
     state
