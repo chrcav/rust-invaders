@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod test;
 use std::io::prelude::*;
 
 #[derive(Default)]
@@ -14,8 +16,7 @@ impl std::fmt::Display for ConditionCodes {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(
             f,
-            r#"z {:#04x} cy {:#04x}
-s {:#04x} p {:#04x}
+            r#"z {:#02x} cy {:#02x} s {:#02x} p {:#02x}
 "#,
             self.z, self.cy, self.s, self.p,
         )
@@ -36,6 +37,7 @@ pub struct State8080 {
     pub memory: Vec<u8>,
     cc: ConditionCodes,
     int_enable: u8,
+    program_len: usize,
 }
 
 impl State8080 {
@@ -53,6 +55,7 @@ impl State8080 {
             memory: Vec::new(),
             cc: ConditionCodes::default(),
             int_enable: 0,
+            program_len: 0,
         }
     }
 }
@@ -80,6 +83,7 @@ pub fn create_initial_emustate(filename: &str, start_pc: u16) -> std::io::Result
         .resize_with(start_pc as usize, Default::default);
     // read the whole file
     f.read_to_end(&mut state.memory)?;
+    state.program_len = state.memory.len();
     state.memory.resize_with(65535, Default::default);
     state.pc = start_pc;
     Ok(state)
@@ -88,15 +92,15 @@ pub fn create_initial_emustate(filename: &str, start_pc: u16) -> std::io::Result
 pub fn emu8080(mut state: State8080) -> std::io::Result<()> {
     loop {
         let op = state.memory[state.pc as usize];
-        println!("start state: {:02x} {}{}", op, state, state.cc);
+        println!("start state:\n{:02x} {}flags:\n{}", op, state, state.cc);
         state.pc += 1;
         match op {
             _ => {
                 state = emu8080_opcode(state, op);
             }
         };
-        println!("end state: {:02x} {}{}", op, state, state.cc);
-        if state.pc as usize >= state.memory.len() {
+        println!("end state:\n{}flags:\n{}", state, state.cc);
+        if state.pc as usize >= state.program_len {
             break;
         }
     }
@@ -112,10 +116,9 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.c = state.memory[state.pc as usize];
             state.pc += 2;
         }
-        0x02 => {
-            // STAX B
-            let addr = addr_from_reg_pair(state.b, state.c);
-            state.a = state.memory[addr as usize];
+        0x02 | 0x12 | 0x22 | 0x32 => {
+            // STAX *
+            state = emu8080_store(state, op);
         }
         0x03 | 0x13 | 0x23 | 0x33 => {
             // INX *
@@ -134,6 +137,7 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state = emu8080_mvi(state, op);
         }
         0x07 => {
+            // TODO: check this
             // RLC
             let mut a = state.a as u16;
             let bit7 = (a >> 7) & 0x1;
@@ -151,16 +155,16 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.l = answer as u8;
             state.cc.cy = (answer > 0xff) as u8;
         }
-        0x0a => {
-            // LDAX B
-            let addr = addr_from_reg_pair(state.b, state.c);
-            state.a = state.memory[addr as usize];
+        0x0a | 0x1a | 0x2a | 0x3a => {
+            // LDAX *
+            state = emu8080_load(state, op);
         }
         0x0b | 0x1b | 0x2b | 0x3b => {
             // DCX *
             state = emu8080_dcx(state, op);
         }
         0x0f => {
+            // TODO: check this
             // RRC
             let mut a = state.a;
             let bit0 = a & 0x1;
@@ -175,17 +179,14 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.e = state.memory[state.pc as usize];
             state.pc += 2;
         }
-        0x12 => {
-            // STAX D
-            let addr = addr_from_reg_pair(state.d, state.e);
-            state.a = state.memory[addr as usize];
-        }
         0x17 => {
+            // TODO: check this
             // RAL
             let mut a = state.a as u16;
             let bit7 = (a >> 7) & 0x1;
+            let cy = state.cc.cy as u16;
             a = a << 1;
-            a |= state.cc.cy as u16 & 0x1;
+            a |= cy & 0x1;
             state.cc.cy = bit7 as u8;
             state.a = a as u8;
         }
@@ -198,18 +199,14 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.l = answer as u8;
             state.cc.cy = (answer > 0xff) as u8;
         }
-        0x1a => {
-            // LDAX D
-            let addr = addr_from_reg_pair(state.d, state.e);
-            state.a = state.memory[addr as usize];
-        }
         0x1f => {
+            // TODO: check this
             // RAR
             let mut a = state.a;
             let bit0 = a & 0x1;
-            let bit7 = (a >> 7) & 0x1;
+            let cy = state.cc.cy;
             a = a >> 1;
-            a |= bit7 << 7;
+            a |= (cy << 7) & 0x80;
             state.cc.cy = bit0 as u8;
             state.a = a as u8;
         }
@@ -219,13 +216,6 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.l = state.memory[state.pc as usize];
             state.pc += 2;
         }
-        0x22 => {
-            // SHLD ${addr}
-            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
-            state.pc += 2;
-            state.memory[addr as usize] = state.l;
-            state.memory[addr as usize + 1] = state.h;
-        }
         0x29 => {
             // DAD H
             let hl = (state.h as u32) << 8 | state.l as u32;
@@ -234,13 +224,6 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.l = answer as u8;
             state.cc.cy = (answer > 0xff) as u8;
         }
-        0x2a => {
-            // LHLD ${addr}
-            let addr = get_addr_from_bytes(state.pc as usize, &state.memory) as usize;
-            state.pc += 2;
-            state.l = state.memory[addr];
-            state.h = state.memory[addr + 1];
-        }
         0x2f => {
             // CMA
             state.a ^= 0xff;
@@ -248,12 +231,6 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
         0x31 => {
             // LXI SP, D16
             state.sp = get_addr_from_bytes(state.pc as usize, &state.memory);
-            state.pc += 2;
-        }
-        0x32 => {
-            // STA adr
-            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
-            state.memory[addr as usize] = state.a;
             state.pc += 2;
         }
         0x37 => {
@@ -268,12 +245,6 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.h = (answer >> 8) as u8;
             state.l = answer as u8;
             state.cc.cy = (answer > 0xff) as u8;
-        }
-        0x3a => {
-            // LDA adr
-            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
-            state.a = state.memory[addr as usize];
-            state.pc += 2;
         }
         0x3f => {
             // CMC
@@ -367,9 +338,13 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.sp += 2;
         }
         0xe3 => {
-            // XHTL
+            // XTHL
+            let h = state.h;
+            let l = state.l;
             state.l = state.memory[state.sp as usize];
             state.h = state.memory[state.sp as usize + 1];
+            state.memory[state.sp as usize] = l;
+            state.memory[state.sp as usize + 1] = h;
         }
         0xe5 => {
             // PUSH H
@@ -377,7 +352,7 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.memory[state.sp as usize - 1] = state.h;
             state.sp -= 2;
         }
-        0xf9 => {
+        0xe9 => {
             // PCHL
             let addr = addr_from_reg_pair(state.h, state.l);
             state.pc = addr;
@@ -788,73 +763,57 @@ fn emu8080_immediate(mut state: State8080, op: u8) -> State8080 {
 }
 
 fn emu8080_call(mut state: State8080, op: u8) -> State8080 {
+    let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
+    state.pc += 2;
     match op {
         0xc4 => {
             // CNZ addr
-            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
-            state.pc += 2;
             if state.cc.z == 0 {
                 state = do_call(state, addr);
             }
         }
         0xcc => {
             // CZ addr
-            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
-            state.pc += 2;
             if state.cc.z == 1 {
                 state = do_call(state, addr);
             }
         }
         0xcd => {
             // CALL ${addr}
-            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
-            state.pc += 2;
             state = do_call(state, addr);
         }
         0xd4 => {
             // CNC addr
-            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
-            state.pc += 2;
             if state.cc.cy == 0 {
                 state = do_call(state, addr);
             }
         }
         0xdc => {
             // CC addr
-            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
-            state.pc += 2;
             if state.cc.cy == 1 {
                 state = do_call(state, addr);
             }
         }
         0xe4 => {
             // CPO addr
-            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
-            state.pc += 2;
             if state.cc.p == 0 {
                 state = do_call(state, addr);
             }
         }
         0xec => {
             // CPE addr
-            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
-            state.pc += 2;
             if state.cc.p == 1 {
                 state = do_call(state, addr);
             }
         }
         0xf4 => {
             // CP addr
-            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
-            state.pc += 2;
             if state.cc.s == 0 {
                 state = do_call(state, addr);
             }
         }
         0xfc => {
             // CM addr
-            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
-            state.pc += 2;
             if state.cc.s == 1 {
                 state = do_call(state, addr);
             }
@@ -865,72 +824,57 @@ fn emu8080_call(mut state: State8080, op: u8) -> State8080 {
 }
 
 fn emu8080_jmp(mut state: State8080, op: u8) -> State8080 {
+    let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
+    state.pc += 2;
     match op {
         0xc2 => {
             // JNZ addr
-            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
-            state.pc += 2;
             if state.cc.z == 0 {
                 state.pc = addr;
             }
         }
         0xc3 => {
             // JMP ${addr}
-            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
             state.pc = addr;
         }
         0xca => {
             // JZ addr
-            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
-            state.pc += 2;
             if state.cc.z == 1 {
                 state.pc = addr;
             }
         }
         0xd2 => {
             // JNC addr
-            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
-            state.pc += 2;
             if state.cc.cy == 0 {
                 state.pc = addr;
             }
         }
         0xda => {
             // JC addr
-            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
-            state.pc += 2;
             if state.cc.cy == 1 {
                 state.pc = addr;
             }
         }
         0xe2 => {
             // JPO addr
-            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
-            state.pc += 2;
             if state.cc.p == 0 {
                 state.pc = addr;
             }
         }
         0xea => {
             // JPE addr
-            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
-            state.pc += 2;
             if state.cc.p == 1 {
                 state.pc = addr;
             }
         }
         0xf2 => {
             // JP addr
-            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
-            state.pc += 2;
             if state.cc.s == 0 {
                 state.pc = addr;
             }
         }
         0xfa => {
             // JM addr
-            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
-            state.pc += 2;
             if state.cc.s == 1 {
                 state.pc = addr;
             }
@@ -1040,6 +984,66 @@ fn emu8080_mov(mut state: State8080, op: u8) -> State8080 {
     state
 }
 
+fn emu8080_store(mut state: State8080, op: u8) -> State8080 {
+    match op {
+        0x02 => {
+            // STAX B
+            let addr = addr_from_reg_pair(state.b, state.c);
+            state.memory[addr as usize] = state.a;
+        }
+        0x12 => {
+            // STAX D
+            let addr = addr_from_reg_pair(state.d, state.e);
+            state.memory[addr as usize] = state.a;
+        }
+        0x22 => {
+            // SHLD ${addr}
+            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
+            state.pc += 2;
+            state.memory[addr as usize] = state.l;
+            state.memory[addr as usize + 1] = state.h;
+        }
+        0x32 => {
+            // STA adr
+            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
+            state.pc += 2;
+            state.memory[addr as usize] = state.a;
+        }
+        _ => panic!("Unimplemented STORE Op code {:#04x}", op),
+    }
+    state
+}
+
+fn emu8080_load(mut state: State8080, op: u8) -> State8080 {
+    match op {
+        0x0a => {
+            // LDAX B
+            let addr = addr_from_reg_pair(state.b, state.c);
+            state.a = state.memory[addr as usize];
+        }
+        0x1a => {
+            // LDAX D
+            let addr = addr_from_reg_pair(state.d, state.e);
+            state.a = state.memory[addr as usize];
+        }
+        0x2a => {
+            // LHLD ${addr}
+            let addr = get_addr_from_bytes(state.pc as usize, &state.memory) as usize;
+            state.pc += 2;
+            state.l = state.memory[addr];
+            state.h = state.memory[addr + 1];
+        }
+        0x3a => {
+            // LDA adr
+            let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
+            state.pc += 2;
+            state.a = state.memory[addr as usize];
+        }
+        _ => panic!("Unimplemented LOAD Op code {:#04x}", op),
+    }
+    state
+}
+
 fn emu8080_mov_reg(state: &State8080, reg_index: u8) -> u8 {
     match reg_index {
         0x0 => {
@@ -1125,6 +1129,6 @@ fn get_addr_from_bytes(i: usize, memory: &Vec<u8>) -> u16 {
     let mut addr: u16 = memory[i + 1] as u16;
     addr = addr << 8;
     addr |= memory[i] as u16;
-    println!("{:04x}", addr);
+    //println!("{:04x}", addr);
     addr
 }
