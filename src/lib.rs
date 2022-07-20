@@ -225,29 +225,21 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             // SBB
             state = emu8080_sbb(state, op - 0x98);
         }
-        // 0xa0..=0xa7 => {
-        // ANA
-        // }
-        // 0xa8..=0xaf => {
-        // XRA
-        // }
-        // 0xb0..=0xb7 => {
-        // ORA
-        // }
-        // 0xb8..=0xbf => {
-        // CMP
-        // }
-        0xa7 => {
-            // ANA A
-            let answer = state.a as u16 & state.a as u16;
-            state.a = answer as u8;
-            state.cc = calc_conditions(state.cc, answer);
+        0xa0..=0xa7 => {
+            // ANA
+            state = emu8080_ana(state, op - 0xa0);
         }
-        0xaf => {
-            // XRA A
-            let answer = state.a as u16 ^ state.a as u16;
-            state.a = answer as u8;
-            state.cc = calc_conditions(state.cc, answer);
+        0xa8..=0xaf => {
+            // XRA
+            state = emu8080_xra(state, op - 0xa8);
+        }
+        0xb0..=0xb7 => {
+            // ORA
+            state = emu8080_ora(state, op - 0xb0);
+        }
+        0xb8..=0xbf => {
+            // CMP
+            state = emu8080_cmp(state, op - 0xb8);
         }
         0xc1 => {
             // POP B
