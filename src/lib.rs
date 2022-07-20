@@ -124,10 +124,9 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             //DCR *
             state = emu8080_dcr(state, op);
         }
-        0x06 => {
-            // MVI B, D8
-            state.b = state.memory[state.pc as usize];
-            state.pc += 1;
+        0x06 | 0x0e | 0x16 | 0x1e | 0x26 | 0x2e | 0x36 | 0x3e => {
+            // MVI *, D8
+            state = emu8080_mvi(state, op);
         }
         0x09 => {
             // DAD B
@@ -181,11 +180,6 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.l = state.memory[state.pc as usize];
             state.pc += 2;
         }
-        0x26 => {
-            // MVI H,D8
-            state.h = state.memory[state.pc as usize];
-            state.pc += 1;
-        }
         0x29 => {
             // DAD H
             let hl = (state.h as u32) << 8 | state.l as u32;
@@ -205,22 +199,11 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.memory[addr as usize] = state.a;
             state.pc += 2;
         }
-        0x36 => {
-            // MVI M, D8
-            state.memory[addr_from_reg_pair(state.h, state.l) as usize] =
-                state.memory[state.pc as usize];
-            state.pc += 1;
-        }
         0x3a => {
             // LDA adr
             let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
             state.a = state.memory[addr as usize];
             state.pc += 2;
-        }
-        0x3e => {
-            // MVI A, D8
-            state.a = state.memory[state.pc as usize];
-            state.pc += 1;
         }
         0x40..=0x75 | 0x77..=0x7f => {
             // MOV
@@ -590,81 +573,120 @@ fn emu8080_sbb(mut state: State8080, reg_index: u8) -> State8080 {
     state
 }
 
-fn emu8080_immediate(mut state: State8080, op: u8) -> State8080 {
+fn emu8080_ana(mut state: State8080, reg_index: u8) -> State8080 {
+    let a = state.a as u16;
+    let src = emu8080_mov_reg(&state, reg_index) as u16;
+    let answer = a & src;
+    state.a = answer as u8;
+    state.cc = calc_conditions(state.cc, answer);
+    state
+}
+
+fn emu8080_xra(mut state: State8080, reg_index: u8) -> State8080 {
+    let a = state.a as u16;
+    let src = emu8080_mov_reg(&state, reg_index) as u16;
+    let answer = a ^ src;
+    state.a = answer as u8;
+    state.cc = calc_conditions(state.cc, answer);
+    state
+}
+
+fn emu8080_ora(mut state: State8080, reg_index: u8) -> State8080 {
+    let a = state.a as u16;
+    let src = emu8080_mov_reg(&state, reg_index) as u16;
+    let answer = a | src;
+    state.a = answer as u8;
+    state.cc = calc_conditions(state.cc, answer);
+    state
+}
+
+fn emu8080_cmp(mut state: State8080, reg_index: u8) -> State8080 {
+    let a = state.a as u16;
+    let src = emu8080_mov_reg(&state, reg_index) as u16;
+    let answer = do_sub(a, src);
+    state.cc = calc_conditions(state.cc, answer);
+    state
+}
+
+fn emu8080_mvi(mut state: State8080, op: u8) -> State8080 {
+    let byte = state.memory[state.pc as usize];
+    state.pc += 1;
     match op {
+        0x06 => {
+            state.b = byte;
+        }
+        0x0e => {
+            state.c = byte;
+        }
+        0x16 => {
+            state.d = byte;
+        }
+        0x1e => {
+            state.e = byte;
+        }
+        0x26 => {
+            state.h = byte;
+        }
+        0x2e => {
+            state.l = byte;
+        }
+        0x36 => {
+            let addr = addr_from_reg_pair(state.h, state.l);
+            state.memory[addr as usize] = byte;
+        }
+        0x3e => {
+            state.a = byte;
+        }
+        _ => panic!("Unimplemented MVI Op code {:#04x}", op),
+    }
+    state
+}
+
+fn emu8080_immediate(mut state: State8080, op: u8) -> State8080 {
+    let a = state.a as u16;
+    let byte = state.memory[state.pc as usize] as u16;
+    state.pc += 1;
+    let answer = match op {
         0xc6 => {
             // ADI D8
-            let a = state.a as u16;
-            let byte = state.memory[state.pc as usize] as u16;
-            state.pc += 1;
-            let answer = a + byte;
-            state.a = answer as u8;
-            state.cc = calc_conditions(state.cc, answer);
+            a + byte
         }
         0xce => {
             // ACI D8
-            let a = state.a as u16;
-            let byte = state.memory[state.pc as usize] as u16;
-            state.pc += 1;
             let cy = state.cc.cy as u16;
-            let answer = a + byte + cy;
-            state.a = answer as u8;
-            state.cc = calc_conditions(state.cc, answer);
+            a + byte + cy
         }
         0xd6 => {
             // SUI D8
-            let a = state.a as u16;
-            let byte = state.memory[state.pc as usize] as u16;
-            state.pc += 1;
-            let answer = do_sub(a, byte);
-            state.a = answer as u8;
-            state.cc = calc_conditions(state.cc, answer);
+            do_sub(a, byte)
         }
         0xde => {
             // SBI D8
-            let a = state.a as u16;
-            let byte = state.memory[state.pc as usize] as u16;
-            state.pc += 1;
             let cy = state.cc.cy as u16;
-            let answer = do_sub(a, byte + cy);
-            state.a = answer as u8;
-            state.cc = calc_conditions(state.cc, answer);
+            do_sub(a, byte + cy)
         }
         0xe6 => {
             // ANI D8
-            let answer = state.memory[state.pc as usize] & state.a;
-            state.pc += 1;
-            state.a = answer as u8;
-            state.cc = calc_conditions(state.cc, answer as u16);
+            a & byte
         }
         0xee => {
             // XRI D8
-            let a = state.a as u16;
-            let byte = state.memory[state.pc as usize] as u16;
-            state.pc += 1;
-            let answer = a ^ byte;
-            state.a = answer as u8;
-            state.cc = calc_conditions(state.cc, answer);
+            a ^ byte
         }
         0xf6 => {
             // ORI D8
-            let a = state.a as u16;
-            let byte = state.memory[state.pc as usize] as u16;
-            state.pc += 1;
-            let answer = a | byte;
-            state.a = answer as u8;
-            state.cc = calc_conditions(state.cc, answer);
+            a | byte
         }
         0xfe => {
             // CPI D8  2 Z, S, P, CY, AC A - data
-            let a = state.a as u16;
-            let byte = state.memory[state.pc as usize] as u16;
-            state.pc += 1;
-            let answer = do_sub(a, byte);
-            state.cc = calc_conditions(state.cc, answer);
+            do_sub(a, byte)
         }
         _ => panic!("Unimplemented Immediate Op code {:#04x}", op),
+    };
+    if op != 0xfe {
+        state.a = answer as u8;
     }
+    state.cc = calc_conditions(state.cc, answer);
     state
 }
 
