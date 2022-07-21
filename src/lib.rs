@@ -1,6 +1,17 @@
 #[cfg(test)]
 mod test;
+extern crate sdl2;
+
+use sdl2::event::Event;
+use sdl2::keyboard::Keycode;
+use sdl2::pixels::PixelFormatEnum;
+use sdl2::render::Texture;
+use sdl2::surface::Surface;
 use std::io::prelude::*;
+use std::path::Path;
+use std::thread;
+use std::time::Duration;
+use std::time::Instant;
 
 #[derive(Default)]
 pub struct ConditionCodes {
@@ -60,6 +71,25 @@ impl State8080 {
     }
 }
 
+#[derive(Default)]
+pub struct Machine8080 {
+    pause: u8,
+    shift_offset: u8,
+    shift0: u8,
+    shift1: u8,
+}
+
+impl Machine8080 {
+    pub fn new() -> Self {
+        Self {
+            pause: 0,
+            shift_offset: 0,
+            shift0: 0,
+            shift1: 0,
+        }
+    }
+}
+
 impl std::fmt::Display for State8080 {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(
@@ -90,21 +120,157 @@ pub fn create_initial_emustate(filename: &str, start_pc: u16) -> std::io::Result
 }
 
 pub fn emu8080(mut state: State8080) -> std::io::Result<()> {
-    loop {
+    let mut machine = Machine8080::new();
+    let sdl_context = sdl2::init().unwrap();
+    let video_subsystem = sdl_context.video().unwrap();
+
+    let window = video_subsystem
+        .window("rust-sdl2 demo", 1024, 896)
+        .position_centered()
+        .build()
+        .unwrap();
+
+    let mut canvas = window.into_canvas().build().unwrap();
+    let mut last_interrupt = Instant::now();
+    let mut last_op = Instant::now();
+    'emu: loop {
+        let now = Instant::now();
+        let time_since_last_op = now.duration_since(last_op);
+        if time_since_last_op < Duration::new(0, 500) {
+            thread::sleep(Duration::new(0, 500) - time_since_last_op);
+        }
+
+        let mut event_pump = sdl_context.event_pump().unwrap();
+        for event in event_pump.poll_iter() {
+            match event {
+                Event::Quit { .. }
+                | Event::KeyDown {
+                    keycode: Some(Keycode::Escape),
+                    ..
+                } => break 'emu,
+                Event::KeyDown {
+                    keycode: Some(Keycode::P),
+                    ..
+                } => machine.pause = (machine.pause ^ 0x1) & 0x1,
+                _ => {}
+            }
+        }
+
+        if machine.pause == 0x1 {
+            continue 'emu;
+        }
+
+        last_op = Instant::now();
+        let now = Instant::now();
+        if now.duration_since(last_interrupt) > Duration::new(0, 16666667) {
+            if state.int_enable == 0x1 {
+                state = generate_interupt(state, 2);
+                canvas.clear();
+                // The rest of the game loop goes here...
+                let texture_creator = canvas.texture_creator();
+
+                let mut data = pixeldata_from_memory(&state.memory, 0x2400, 0x3fff);
+                let surface =
+                    Surface::from_data(&mut data[..], 256, 224, 256 * 3, PixelFormatEnum::RGB24)
+                        .unwrap();
+                surface
+                    .save_bmp(Path::new("./invaders.bmp"))
+                    .expect("unable to write out bmp");
+                let texture = Texture::from_surface(&surface, &texture_creator).unwrap();
+                canvas
+                    .copy(&texture, None, None)
+                    .expect("couldn't render texture");
+                canvas.present();
+                last_interrupt = Instant::now();
+            }
+        }
+
         let op = state.memory[state.pc as usize];
-        println!("start state:\n{:02x} {}flags:\n{}", op, state, state.cc);
+        /*println!(
+            "start state:\n{:02x} {} {}flags:\n{}",
+            op,
+            command_format(&state.memory, state.pc as usize, op),
+            state,
+            state.cc
+        );*/
         state.pc += 1;
         match op {
+            0xd3 => {
+                // OUT d8
+                let port = state.memory[state.pc as usize];
+                state.pc += 1;
+                machine = machine_output(machine, port, state.a);
+            }
+            0xdb => {
+                // IN d8
+                let port = state.memory[state.pc as usize];
+                state.pc += 1;
+                state.a = machine_input(port, machine.shift0, machine.shift1, machine.shift_offset);
+            }
             _ => {
                 state = emu8080_opcode(state, op);
             }
         };
-        println!("end state:\n{}flags:\n{}", state, state.cc);
-        if state.pc as usize >= state.program_len {
+        //println!("end state:\n{}flags:\n{}", state, state.cc);
+        if state.pc as usize >= state.memory.len() {
             break;
         }
     }
     Ok(())
+}
+
+fn pixeldata_from_memory(memory: &Vec<u8>, start: u16, end: u16) -> Vec<u8> {
+    let mut data = Vec::new();
+    let start_hi = start >> 8;
+    let end_hi = end >> 8;
+    let start_lo = start & 0xff;
+    let end_lo = end & 0xff;
+    for hi in start_hi..=end_hi {
+        for lo in start_lo..=end_lo {
+            //println!("{:04x} {:02x}", i, memory[i as usize]);
+            let addr = (hi as u16) << 8 | (lo as u16);
+            for bit in 0..=7 {
+                let mut pixel = if (memory[addr as usize] & (1 << bit)) != 0x0 {
+                    vec![255, 255, 255]
+                } else {
+                    vec![0, 0, 0]
+                };
+                data.append(&mut pixel);
+            }
+        }
+    }
+    data
+}
+
+fn machine_input(port: u8, shift0: u8, shift1: u8, shift_offset: u8) -> u8 {
+    match port {
+        0x01 => 0x01,
+        0x02 => 0x00,
+        0x03 => {
+            let val = ((shift1 as u16) << 8) | (shift0 as u16);
+            ((val >> (8 - shift_offset)) & 0xff) as u8
+        }
+        _ => panic!("invalid port {}", port),
+    }
+}
+
+fn machine_output(mut machine: Machine8080, port: u8, value: u8) -> Machine8080 {
+    match port {
+        0x02 => {
+            machine.shift_offset = value & 0x7;
+        }
+        0x04 => {
+            machine.shift0 = machine.shift1;
+            machine.shift1 = value;
+        }
+        0x03 | 0x05 | 0x06 => {}
+        _ => panic!("invalid port {}", port),
+    }
+    machine
+}
+
+fn generate_interupt(state: State8080, interupt_num: u16) -> State8080 {
+    do_call(state, interupt_num * 8)
 }
 
 fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
@@ -1131,4 +1297,415 @@ fn get_addr_from_bytes(i: usize, memory: &Vec<u8>) -> u16 {
     addr |= memory[i] as u16;
     //println!("{:04x}", addr);
     addr
+}
+
+fn diassemble() -> std::io::Result<()> {
+    let mut f = std::fs::File::open("invaders")?;
+    let mut buffer = Vec::new();
+    // read the whole file
+    f.read_to_end(&mut buffer)?;
+
+    let mut i = 0;
+    loop {
+        let op = buffer[i];
+        let incr = 1;
+        let command = command_format(&buffer, i, op);
+        println!("{:04x} {:#04x} {}", i, op, command);
+        i += incr;
+        if i >= buffer.len() {
+            break;
+        }
+    }
+    Ok(())
+}
+
+pub fn command_format(buffer: &Vec<u8>, pc: usize, op: u8) -> String {
+    match op {
+        0x00 => format!("NOP 1"),
+        0x01 => {
+            format!(
+                "LXI B,D16 3  B <- {:#04x}, C <- {:#04x}",
+                buffer[pc + 2],
+                buffer[pc + 1]
+            )
+        }
+        0x02 => format!("STAX B 1  (BC) <- A"),
+        0x03 => format!("INX B 1  BC <- BC+1"),
+        0x04 => format!("INR B 1 Z, S, P, AC B <- B+1"),
+        0x05 => format!("DCR B 1 Z, S, P, AC B <- B-1"),
+        0x06 => {
+            format!("MVI B, D8 2  B <- {:#04x}", buffer[pc + 1])
+        }
+        0x07 => format!("RLC 1 CY A = A << 1; bit 0 = prev bit 7; CY = prev bit 7"),
+        0x09 => format!("DAD B 1 CY HL = HL + BC"),
+        0x0a => format!("LDAX B 1  A <- (BC)"),
+        0x0b => format!("DCX B 1  BC = BC-1"),
+        0x0c => format!("INR C 1 Z, S, P, AC C <- C+1"),
+        0x0d => format!("DCR C 1 Z, S, P, AC C <-C-1"),
+        0x0e => {
+            format!("MVI C,D8 2  C <- {:#04x}", buffer[pc + 1])
+        }
+        0x0f => format!("RRC 1 CY A = A >> 1; bit 7 = prev bit 0; CY = prev bit 0"),
+        0x11 => {
+            format!(
+                "LXI D,D16 3  D <- {:#04x}, E <- {:#04x}",
+                buffer[pc + 2],
+                buffer[pc + 1]
+            )
+        }
+        0x12 => format!("STAX D 1  (DE) <- A"),
+        0x13 => format!("INX D 1  DE <- DE + 1"),
+        0x14 => format!("INR D 1 Z, S, P, AC D <- D+1"),
+        0x15 => format!("DCR D 1 Z, S, P, AC D <- D-1"),
+        0x16 => {
+            format!("MVI D, D8 2  D <- {:#04x}", buffer[pc + 1])
+        }
+        0x17 => format!("RAL 1 CY A = A << 1; bit 0 = prev CY; CY = prev bit 7"),
+        0x19 => format!("DAD D 1 CY HL = HL + DE"),
+        0x1a => format!("LDAX D 1  A <- (DE)"),
+        0x1b => format!("DCX D 1  DE = DE-1"),
+        0x1c => format!("INR E 1 Z, S, P, AC E <-E+1"),
+        0x1d => format!("DCR E 1 Z, S, P, AC E <- E-1"),
+        0x1e => {
+            format!("MVI E,D8 2  E <- {:#04x}", buffer[pc + 1])
+        }
+        0x1f => format!("RAR 1 CY A = A >> 1; bit 7 = prev bit 7; CY = prev bit 0"),
+        0x20 => format!("RIM 1  special"),
+        0x21 => {
+            format!(
+                "LXI H,D16 3  H <- {:#04x}, L <- {:#04x}",
+                buffer[pc + 2],
+                buffer[pc + 1]
+            )
+        }
+        0x22 => {
+            let addr = get_addr_from_bytes(pc, &buffer);
+            format!("SHLD adr 3  ({:#04x}) <-L; ({:#04x}+1)<-H", addr, addr)
+        }
+        0x23 => format!("INX H 1  HL <- HL + 1"),
+        0x24 => format!("INR H 1 Z, S, P, AC H <- H+1"),
+        0x25 => format!("DCR H 1 Z, S, P, AC H <- H-1"),
+        0x26 => {
+            format!("MVI H,D8 2  L <- {:#04x}", buffer[pc + 1])
+        }
+        0x27 => format!("DAA 1  special"),
+        0x29 => format!("DAD H 1 CY HL = HL + HI"),
+        0x2a => {
+            let addr = get_addr_from_bytes(pc, &buffer);
+            format!("LHLD adr 3  L <- ({:#04x}); H<-({:#04x}+1)", addr, addr)
+        }
+        0x2b => format!("DCX H 1  HL = HL-1"),
+        0x2c => format!("INR L 1 Z, S, P, AC L <- L+1"),
+        0x2d => format!("DCR L 1 Z, S, P, AC L <- L-1"),
+        0x2e => {
+            format!("MVI L, D8 2  L <- {:#04x}", buffer[pc + 1])
+        }
+        0x2f => format!("CMA 1  A <- !A"),
+        0x30 => format!("SIM 1  special"),
+        0x31 => {
+            format!(
+                "LXI SP, D16 3  SP.hi <- {:#04x}, SP.lo <- {:#04x}",
+                buffer[pc + 2],
+                buffer[pc + 1]
+            )
+        }
+        0x32 => {
+            let addr = get_addr_from_bytes(pc, &buffer);
+            format!("STA adr 3  ({:#04x}) <- A", addr)
+        }
+        0x33 => format!("INX SP 1  SP = SP + 1"),
+        0x34 => format!("INR M 1 Z, S, P, AC (HL) <- (HL)+1"),
+        0x35 => format!("DCR M 1 Z, S, P, AC (HL) <- (HL)-1"),
+        0x36 => {
+            format!("MVI M,D8 2  (HL) <- {:#04x}", buffer[pc + 1])
+        }
+        0x37 => format!("STC 1 CY CY = 1"),
+        0x39 => format!("DAD SP 1 CY HL = HL + SP"),
+        0x3a => {
+            let addr = get_addr_from_bytes(pc, &buffer);
+            format!("LDA adr 3  A <- ({:#04x})", addr)
+        }
+        0x3b => format!("DCX SP 1  SP = SP-1"),
+        0x3c => format!("INR A 1 Z, S, P, AC A <- A+1"),
+        0x3d => format!("DCR A 1 Z, S, P, AC A <- A-1"),
+        0x3e => {
+            format!("MVI A,D8 2  A <- {:#04x}", buffer[pc + 1])
+        }
+        0x3f => format!("CMC 1 CY CY=!CY"),
+        0x40 => format!("MOV B,B 1  B <- B"),
+        0x41 => format!("MOV B,C 1  B <- C"),
+        0x42 => format!("MOV B,D 1  B <- D"),
+        0x43 => format!("MOV B,E 1  B <- E"),
+        0x44 => format!("MOV B,H 1  B <- H"),
+        0x45 => format!("MOV B,L 1  B <- L"),
+        0x46 => format!("MOV B,M 1  B <- (HL)"),
+        0x47 => format!("MOV B,A 1  B <- A"),
+        0x48 => format!("MOV C,B 1  C <- B"),
+        0x49 => format!("MOV C,C 1  C <- C"),
+        0x4a => format!("MOV C,D 1  C <- D"),
+        0x4b => format!("MOV C,E 1  C <- E"),
+        0x4c => format!("MOV C,H 1  C <- H"),
+        0x4d => format!("MOV C,L 1  C <- L"),
+        0x4e => format!("MOV C,M 1  C <- (HL)"),
+        0x4f => format!("MOV C,A 1  C <- A"),
+        0x50 => format!("MOV D,B 1  D <- B"),
+        0x51 => format!("MOV D,C 1  D <- C"),
+        0x52 => format!("MOV D,D 1  D <- D"),
+        0x53 => format!("MOV D,E 1  D <- E"),
+        0x54 => format!("MOV D,H 1  D <- H"),
+        0x55 => format!("MOV D,L 1  D <- L"),
+        0x56 => format!("MOV D,M 1  D <- (HL)"),
+        0x57 => format!("MOV D,A 1  D <- A"),
+        0x58 => format!("MOV E,B 1  E <- B"),
+        0x59 => format!("MOV E,C 1  E <- C"),
+        0x5a => format!("MOV E,D 1  E <- D"),
+        0x5b => format!("MOV E,E 1  E <- E"),
+        0x5c => format!("MOV E,H 1  E <- H"),
+        0x5d => format!("MOV E,L 1  E <- L"),
+        0x5e => format!("MOV E,M 1  E <- (HL)"),
+        0x5f => format!("MOV E,A 1  E <- A"),
+        0x60 => format!("MOV H,B 1  H <- B"),
+        0x61 => format!("MOV H,C 1  H <- C"),
+        0x62 => format!("MOV H,D 1  H <- D"),
+        0x63 => format!("MOV H,E 1  H <- E"),
+        0x64 => format!("MOV H,H 1  H <- H"),
+        0x65 => format!("MOV H,L 1  H <- L"),
+        0x66 => format!("MOV H,M 1  H <- (HL)"),
+        0x67 => format!("MOV H,A 1  H <- A"),
+        0x68 => format!("MOV L,B 1  L <- B"),
+        0x69 => format!("MOV L,C 1  L <- C"),
+        0x6a => format!("MOV L,D 1  L <- D"),
+        0x6b => format!("MOV L,E 1  L <- E"),
+        0x6c => format!("MOV L,H 1  L <- H"),
+        0x6d => format!("MOV L,L 1  L <- L"),
+        0x6e => format!("MOV L,M 1  L <- (HL)"),
+        0x6f => format!("MOV L,A 1  L <- A"),
+        0x70 => format!("MOV M,B 1  (HL) <- B"),
+        0x71 => format!("MOV M,C 1  (HL) <- C"),
+        0x72 => format!("MOV M,D 1  (HL) <- D"),
+        0x73 => format!("MOV M,E 1  (HL) <- E"),
+        0x74 => format!("MOV M,H 1  (HL) <- H"),
+        0x75 => format!("MOV M,L 1  (HL) <- L"),
+        0x76 => format!("HLT 1  special"),
+        0x77 => format!("MOV M,A 1  (HL) <- C"),
+        0x78 => format!("MOV A,B 1  A <- B"),
+        0x79 => format!("MOV A,C 1  A <- C"),
+        0x7a => format!("MOV A,D 1  A <- D"),
+        0x7b => format!("MOV A,E 1  A <- E"),
+        0x7c => format!("MOV A,H 1  A <- H"),
+        0x7d => format!("MOV A,L 1  A <- L"),
+        0x7e => format!("MOV A,M 1  A <- (HL)"),
+        0x7f => format!("MOV A,A 1  A <- A"),
+        0x80 => format!("ADD B 1 Z, S, P, CY, AC A <- A + B"),
+        0x81 => format!("ADD C 1 Z, S, P, CY, AC A <- A + C"),
+        0x82 => format!("ADD D 1 Z, S, P, CY, AC A <- A + D"),
+        0x83 => format!("ADD E 1 Z, S, P, CY, AC A <- A + E"),
+        0x84 => format!("ADD H 1 Z, S, P, CY, AC A <- A + H"),
+        0x85 => format!("ADD L 1 Z, S, P, CY, AC A <- A + L"),
+        0x86 => format!("ADD M 1 Z, S, P, CY, AC A <- A + (HL)"),
+        0x87 => format!("ADD A 1 Z, S, P, CY, AC A <- A + A"),
+        0x88 => format!("ADC B 1 Z, S, P, CY, AC A <- A + B + CY"),
+        0x89 => format!("ADC C 1 Z, S, P, CY, AC A <- A + C + CY"),
+        0x8a => format!("ADC D 1 Z, S, P, CY, AC A <- A + D + CY"),
+        0x8b => format!("ADC E 1 Z, S, P, CY, AC A <- A + E + CY"),
+        0x8c => format!("ADC H 1 Z, S, P, CY, AC A <- A + H + CY"),
+        0x8d => format!("ADC L 1 Z, S, P, CY, AC A <- A + L + CY"),
+        0x8e => format!("ADC M 1 Z, S, P, CY, AC A <- A + (HL) + CY"),
+        0x8f => format!("ADC A 1 Z, S, P, CY, AC A <- A + A + CY"),
+        0x90 => format!("SUB B 1 Z, S, P, CY, AC A <- A - B"),
+        0x91 => format!("SUB C 1 Z, S, P, CY, AC A <- A - C"),
+        0x92 => format!("SUB D 1 Z, S, P, CY, AC A <- A + D"),
+        0x93 => format!("SUB E 1 Z, S, P, CY, AC A <- A - E"),
+        0x94 => format!("SUB H 1 Z, S, P, CY, AC A <- A + H"),
+        0x95 => format!("SUB L 1 Z, S, P, CY, AC A <- A - L"),
+        0x96 => format!("SUB M 1 Z, S, P, CY, AC A <- A + (HL)"),
+        0x97 => format!("SUB A 1 Z, S, P, CY, AC A <- A - A"),
+        0x98 => format!("SBB B 1 Z, S, P, CY, AC A <- A - B - CY"),
+        0x99 => format!("SBB C 1 Z, S, P, CY, AC A <- A - C - CY"),
+        0x9a => format!("SBB D 1 Z, S, P, CY, AC A <- A - D - CY"),
+        0x9b => format!("SBB E 1 Z, S, P, CY, AC A <- A - E - CY"),
+        0x9c => format!("SBB H 1 Z, S, P, CY, AC A <- A - H - CY"),
+        0x9d => format!("SBB L 1 Z, S, P, CY, AC A <- A - L - CY"),
+        0x9e => format!("SBB M 1 Z, S, P, CY, AC A <- A - (HL) - CY"),
+        0x9f => format!("SBB A 1 Z, S, P, CY, AC A <- A - A - CY"),
+        0xa0 => format!("ANA B 1 Z, S, P, CY, AC A <- A & B"),
+        0xa1 => format!("ANA C 1 Z, S, P, CY, AC A <- A & C"),
+        0xa2 => format!("ANA D 1 Z, S, P, CY, AC A <- A & D"),
+        0xa3 => format!("ANA E 1 Z, S, P, CY, AC A <- A & E"),
+        0xa4 => format!("ANA H 1 Z, S, P, CY, AC A <- A & H"),
+        0xa5 => format!("ANA L 1 Z, S, P, CY, AC A <- A & L"),
+        0xa6 => format!("ANA M 1 Z, S, P, CY, AC A <- A & (HL)"),
+        0xa7 => format!("ANA A 1 Z, S, P, CY, AC A <- A & A"),
+        0xa8 => format!("XRA B 1 Z, S, P, CY, AC A <- A ^ B"),
+        0xa9 => format!("XRA C 1 Z, S, P, CY, AC A <- A ^ C"),
+        0xaa => format!("XRA D 1 Z, S, P, CY, AC A <- A ^ D"),
+        0xab => format!("XRA E 1 Z, S, P, CY, AC A <- A ^ E"),
+        0xac => format!("XRA H 1 Z, S, P, CY, AC A <- A ^ H"),
+        0xad => format!("XRA L 1 Z, S, P, CY, AC A <- A ^ L"),
+        0xae => format!("XRA M 1 Z, S, P, CY, AC A <- A ^ (HL)"),
+        0xaf => format!("XRA A 1 Z, S, P, CY, AC A <- A ^ A"),
+        //ORA
+        0xb0 => format!("ORA B 1 Z, S, P, CY, AC A <- A | B"),
+        0xb1 => format!("ORA C 1 Z, S, P, CY, AC A <- A | C"),
+        0xb2 => format!("ORA D 1 Z, S, P, CY, AC A <- A | D"),
+        0xb3 => format!("ORA E 1 Z, S, P, CY, AC A <- A | E"),
+        0xb4 => format!("ORA H 1 Z, S, P, CY, AC A <- A | H"),
+        0xb5 => format!("ORA L 1 Z, S, P, CY, AC A <- A | L"),
+        0xb6 => format!("ORA M 1 Z, S, P, CY, AC A <- A | (HL)"),
+        0xb7 => format!("ORA A 1 Z, S, P, CY, AC A <- A | A"),
+        // CMP
+        0xb8 => format!("CMP B 1 Z, S, P, CY, AC A - B"),
+        0xb9 => format!("CMP C 1 Z, S, P, CY, AC A - C"),
+        0xba => format!("CMP D 1 Z, S, P, CY, AC A - D"),
+        0xbb => format!("CMP E 1 Z, S, P, CY, AC A - E"),
+        0xbc => format!("CMP H 1 Z, S, P, CY, AC A - H"),
+        0xbd => format!("CMP L 1 Z, S, P, CY, AC A - L"),
+        0xbe => format!("CMP M 1 Z, S, P, CY, AC A - (HL)"),
+        0xbf => format!("CMP A 1 Z, S, P, CY, AC A - A"),
+        0xc0 => format!("RNZ 1  if NZ, RET"),
+        0xc1 => format!("POP B 1  C <- (sp); B <- (sp+1); sp <- sp+2"),
+        0xc2 => {
+            let addr = get_addr_from_bytes(pc, &buffer);
+            format!("JNZ adr 3  if NZ, PC <- {:#04x}", addr)
+        }
+        0xc3 => {
+            let addr = get_addr_from_bytes(pc, &buffer);
+            format!("JMP adr 3  PC <= {:#04x}", addr)
+        }
+        0xc4 => {
+            let addr = get_addr_from_bytes(pc, &buffer);
+            format!("CNZ adr 3  if NZ, CALL {:#04x}", addr)
+        }
+        0xc5 => format!("PUSH B 1  (sp-2)<-C; (sp-1)<-B; sp <- sp - 2"),
+        0xc6 => {
+            format!("ADI D8 2 Z, S, P, CY, AC A <- A + {:#04x}", buffer[pc + 1])
+        }
+        0xc7 => format!("RST 0 1  CALL $0"),
+        0xc8 => format!("RZ 1  if Z, RET"),
+        0xc9 => format!("RET 1  PC.lo <- (sp); PC.hi<-(sp+1); SP <- SP+2"),
+        0xca => {
+            let addr = get_addr_from_bytes(pc, &buffer);
+            format!("JZ adr 3  if Z, PC <- {:#04x}", addr)
+        }
+        0xcc => {
+            let addr = get_addr_from_bytes(pc, &buffer);
+            format!("CZ adr 3  if Z, CALL {:#04x}", addr)
+        }
+        0xcd => {
+            let addr = get_addr_from_bytes(pc, &buffer);
+            format!(
+                "CALL adr 3  (SP-1)<-PC.hi;(SP-2)<-PC.lo;SP<-SP+2;PC={:#04x}",
+                addr
+            )
+        }
+        0xce => {
+            format!(
+                "ACI D8 2 Z, S, P, CY, AC A <- A + {:#04x} + CY",
+                buffer[pc + 1]
+            )
+        }
+        0xcf => format!("RST 1 1  CALL $8"),
+        0xd0 => format!("RNC 1  if NCY, RET"),
+        0xd1 => format!("POP D 1  E <- (sp); D <- (sp+1); sp <- sp+2"),
+        0xd2 => {
+            let addr = get_addr_from_bytes(pc, &buffer);
+            format!("JNC adr 3  if NCY, PC<-{:#04x}", addr)
+        }
+        0xd3 => {
+            format!("OUT D8 2  special {:#04x}", buffer[pc + 1])
+        }
+        0xd4 => {
+            let addr = get_addr_from_bytes(pc, &buffer);
+            format!("CNC adr 3  if NCY, CALL {:#04x}", addr)
+        }
+        0xd5 => format!("PUSH D 1  (sp-2)<-E; (sp-1)<-D; sp <- sp - 2"),
+        0xd6 => {
+            format!("SUI D8 2 Z, S, P, CY, AC A <- A - {:#04x}", buffer[pc + 1])
+        }
+        0xd7 => format!("RST 2 1  CALL $10"),
+        0xd8 => format!("RC 1  if CY, RET"),
+        0xda => {
+            let addr = get_addr_from_bytes(pc, &buffer);
+            format!("JC adr 3  if CY, PC<-{:#04x}", addr)
+        }
+        0xdb => {
+            format!("IN D8 2  special {:#04x}", buffer[pc + 1])
+        }
+        0xdc => {
+            let addr = get_addr_from_bytes(pc, &buffer);
+            format!("CC adr 3  if CY, CALL {:#04x}", addr)
+        }
+        0xde => {
+            format!(
+                "SBI D8 2 Z, S, P, CY, AC A <- A - {:#04x} - CY",
+                buffer[pc + 1]
+            )
+        }
+        0xdf => {
+            format!("RST 3 1  CALL $18")
+        }
+        0xe0 => format!("RPO 1  if PO, RET"),
+        0xe1 => format!("POP H 1  L <- (sp); H <- (sp+1); sp <- sp+2"),
+        0xe2 => {
+            let addr = get_addr_from_bytes(pc, &buffer);
+            format!("JPO adr 3  if PO, PC <- {:#04x}", addr)
+        }
+        0xe3 => format!("XTHL 1  L <-> (SP); H <-> (SP+1)"),
+        0xe4 => {
+            let addr = get_addr_from_bytes(pc, &buffer);
+            format!("CPO adr 3  if PO, CALL {:#04x}", addr)
+        }
+        0xe5 => format!("PUSH H 1  (sp-2)<-L; (sp-1)<-H; sp <- sp - 2"),
+        0xe6 => {
+            format!("ANI D8 2 Z, S, P, CY, AC A <- A & {:#04x}", buffer[pc + 1])
+        }
+        0xe7 => format!("RST 4 1  CALL $20"),
+        0xe8 => format!("RPE 1  if PE, RET"),
+        0xe9 => format!("PCHL 1  PC.hi <- H; PC.lo <- L"),
+        0xea => {
+            let addr = get_addr_from_bytes(pc, &buffer);
+            format!("JPE adr 3  if PE, PC <- {:#04x}", addr)
+        }
+        0xeb => format!("XCHG 1  H <-> D; L <-> E"),
+        0xec => {
+            let addr = get_addr_from_bytes(pc, &buffer);
+            format!("CPE adr 3  if PE, CALL {:#04x}", addr)
+        }
+        0xee => {
+            format!("XRI D8 2 Z, S, P, CY, AC A <- A ^ {:#04x}", buffer[pc + 1])
+        }
+        0xef => format!("RST 5 1  CALL $28"),
+        0xf0 => format!("RP 1  if P, RET"),
+        0xf1 => format!("POP PSW 1  flags <- (sp); A <- (sp+1); sp <- sp+2"),
+        0xf2 => {
+            let addr = get_addr_from_bytes(pc, &buffer);
+            format!("JP adr 3  if P=1 PC <- {:#04x}", addr)
+        }
+        0xf3 => format!("DI 1  special"),
+        0xf4 => {
+            let addr = get_addr_from_bytes(pc, &buffer);
+            format!("CP adr 3  if P, PC <- {:#04x}", addr)
+        }
+        0xf5 => format!("PUSH PSW 1  (sp-2)<-flags; (sp-1)<-A; sp <- sp - 2"),
+        0xf6 => {
+            format!("ORI D8 2 Z, S, P, CY, AC A <- A | {:#04x}", buffer[pc + 1])
+        }
+        0xf7 => format!("RST 6 1  CALL $30"),
+        0xf8 => format!("RM 1  if M, RET"),
+        0xf9 => format!("SPHL 1  SP=HL"),
+        0xfa => {
+            let addr = get_addr_from_bytes(pc, &buffer);
+            format!("JM adr 3  if M, PC <- {:#04x}", addr)
+        }
+        0xfb => format!("EI 1  special"),
+        0xfc => {
+            let addr = get_addr_from_bytes(pc, &buffer);
+            format!("CM adr 3  if M, CALL {:#04x}", addr)
+        }
+        0xfe => {
+            format!("CPI D8 2 Z, S, P, CY, AC A - {:#04x}", buffer[pc + 1])
+        }
+        0xff => format!("RST 7 1  CALL $38"),
+        _ => format!("Invalid Op code {:#04x}", op),
+    }
 }
