@@ -252,15 +252,14 @@ pub fn emu8080(mut machine: MachineInvaders) -> std::io::Result<()> {
 
 fn pixeldata_from_memory(memory: &Vec<u8>, start: u16, end: u16) -> Vec<u8> {
     let mut data = Vec::new();
-    let start_hi = start >> 8;
-    let end_hi = end >> 8;
-    let start_lo = start & 0xff;
-    let end_lo = end & 0xff;
-    for hi in start_hi..=end_hi {
-        for lo in start_lo..=end_lo {
-            //println!("{:04x} {:02x}", i, memory[i as usize]);
-            let addr = (hi as u16) << 8 | (lo as u16);
-            for bit in 0..=7 {
+    let start_hi = start >> 5;
+    let end_hi = end >> 5;
+    let start_lo = start & 0x1f;
+    let end_lo = (end | 0x10) & 0x1f;
+    for lo in (start_lo..=end_lo).rev() {
+        for bit in (0..=7).rev() {
+            for hi in start_hi..=end_hi {
+                let addr = (hi as u16) << 5 | (lo as u16);
                 let mut pixel = if (memory[addr as usize] & (1 << bit)) != 0x0 {
                     vec![255, 255, 255]
                 } else {
