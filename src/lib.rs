@@ -77,6 +77,9 @@ pub struct Machine8080 {
     shift_offset: u8,
     shift0: u8,
     shift1: u8,
+    read1: u8,
+    read2: u8,
+    emu_state: State8080,
 }
 
 impl Machine8080 {
@@ -86,6 +89,9 @@ impl Machine8080 {
             shift_offset: 0,
             shift0: 0,
             shift1: 0,
+            read1: 1,
+            read2: 0,
+            emu_state: State8080::new(),
         }
     }
 }
@@ -105,22 +111,25 @@ pc {:04x} sp {:04x}
     }
 }
 
-pub fn create_initial_emustate(filename: &str, start_pc: u16) -> std::io::Result<State8080> {
+pub fn create_initial_emustate(filename: &str, start_pc: u16) -> std::io::Result<Machine8080> {
     let mut f = std::fs::File::open(filename)?;
-    let mut state = State8080::new();
-    state
+    let mut machine = Machine8080::new();
+    machine
+        .emu_state
         .memory
         .resize_with(start_pc as usize, Default::default);
     // read the whole file
-    f.read_to_end(&mut state.memory)?;
-    state.program_len = state.memory.len();
-    state.memory.resize_with(65535, Default::default);
-    state.pc = start_pc;
-    Ok(state)
+    f.read_to_end(&mut machine.emu_state.memory)?;
+    machine.emu_state.program_len = machine.emu_state.memory.len();
+    machine
+        .emu_state
+        .memory
+        .resize_with(65535, Default::default);
+    machine.emu_state.pc = start_pc;
+    Ok(machine)
 }
 
-pub fn emu8080(mut state: State8080) -> std::io::Result<()> {
-    let mut machine = Machine8080::new();
+pub fn emu8080(mut machine: Machine8080) -> std::io::Result<()> {
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
 
@@ -136,8 +145,8 @@ pub fn emu8080(mut state: State8080) -> std::io::Result<()> {
     'emu: loop {
         let now = Instant::now();
         let time_since_last_op = now.duration_since(last_op);
-        if time_since_last_op < Duration::new(0, 500) {
-            thread::sleep(Duration::new(0, 500) - time_since_last_op);
+        if time_since_last_op < Duration::new(0, 1000) {
+            thread::sleep(Duration::new(0, 1000) - time_since_last_op);
         }
 
         let mut event_pump = sdl_context.event_pump().unwrap();
@@ -152,6 +161,34 @@ pub fn emu8080(mut state: State8080) -> std::io::Result<()> {
                     keycode: Some(Keycode::P),
                     ..
                 } => machine.pause = (machine.pause ^ 0x1) & 0x1,
+                Event::KeyDown {
+                    keycode: Some(Keycode::Return),
+                    ..
+                } => machine.read1 |= 0x1 << 2,
+                Event::KeyDown {
+                    keycode: Some(Keycode::Space),
+                    ..
+                } => machine.read1 |= 0x1 << 4,
+                Event::KeyDown {
+                    keycode: Some(Keycode::A),
+                    ..
+                } => machine.read1 |= 0x1 << 5,
+                Event::KeyDown {
+                    keycode: Some(Keycode::D),
+                    ..
+                } => machine.read1 |= 0x1 << 6,
+                Event::KeyUp {
+                    keycode: Some(Keycode::Space),
+                    ..
+                } => machine.read1 ^= 0x1 << 4,
+                Event::KeyUp {
+                    keycode: Some(Keycode::A),
+                    ..
+                } => machine.read1 ^= 0x1 << 5,
+                Event::KeyUp {
+                    keycode: Some(Keycode::D),
+                    ..
+                } => machine.read1 ^= 0x1 << 6,
                 _ => {}
             }
         }
@@ -163,13 +200,13 @@ pub fn emu8080(mut state: State8080) -> std::io::Result<()> {
         last_op = Instant::now();
         let now = Instant::now();
         if now.duration_since(last_interrupt) > Duration::new(0, 16666667) {
-            if state.int_enable == 0x1 {
-                state = generate_interupt(state, 2);
+            if machine.emu_state.int_enable == 0x1 {
+                machine.emu_state = generate_interupt(machine.emu_state, 2);
                 canvas.clear();
                 // The rest of the game loop goes here...
                 let texture_creator = canvas.texture_creator();
 
-                let mut data = pixeldata_from_memory(&state.memory, 0x2400, 0x3fff);
+                let mut data = pixeldata_from_memory(&machine.emu_state.memory, 0x2400, 0x3fff);
                 let surface =
                     Surface::from_data(&mut data[..], 256, 224, 256 * 3, PixelFormatEnum::RGB24)
                         .unwrap();
@@ -185,34 +222,34 @@ pub fn emu8080(mut state: State8080) -> std::io::Result<()> {
             }
         }
 
-        let op = state.memory[state.pc as usize];
-        /*println!(
+        let op = machine.emu_state.memory[machine.emu_state.pc as usize];
+        println!(
             "start state:\n{:02x} {} {}flags:\n{}",
             op,
-            command_format(&state.memory, state.pc as usize, op),
-            state,
-            state.cc
-        );*/
-        state.pc += 1;
+            command_format(&machine.emu_state.memory, machine.emu_state.pc as usize, op),
+            machine.emu_state,
+            machine.emu_state.cc
+        );
+        machine.emu_state.pc += 1;
         match op {
             0xd3 => {
                 // OUT d8
-                let port = state.memory[state.pc as usize];
-                state.pc += 1;
-                machine = machine_output(machine, port, state.a);
+                let port = machine.emu_state.memory[machine.emu_state.pc as usize];
+                machine.emu_state.pc += 1;
+                machine = machine_output(machine, port);
             }
             0xdb => {
                 // IN d8
-                let port = state.memory[state.pc as usize];
-                state.pc += 1;
-                state.a = machine_input(port, machine.shift0, machine.shift1, machine.shift_offset);
+                let port = machine.emu_state.memory[machine.emu_state.pc as usize];
+                machine.emu_state.pc += 1;
+                machine = machine_input(machine, port);
             }
             _ => {
-                state = emu8080_opcode(state, op);
+                machine.emu_state = emu8080_opcode(machine.emu_state, op);
             }
         };
-        //println!("end state:\n{}flags:\n{}", state, state.cc);
-        if state.pc as usize >= state.memory.len() {
+        //println!("end state:\n{}flags:\n{}", machine.emu_state, machine.emu_state.cc);
+        if machine.emu_state.pc as usize >= machine.emu_state.memory.len() {
             break;
         }
     }
@@ -242,19 +279,21 @@ fn pixeldata_from_memory(memory: &Vec<u8>, start: u16, end: u16) -> Vec<u8> {
     data
 }
 
-fn machine_input(port: u8, shift0: u8, shift1: u8, shift_offset: u8) -> u8 {
-    match port {
-        0x01 => 0x01,
-        0x02 => 0x00,
+fn machine_input(mut machine: Machine8080, port: u8) -> Machine8080 {
+    machine.emu_state.a = match port {
+        0x01 => machine.read1,
+        0x02 => machine.read2,
         0x03 => {
-            let val = ((shift1 as u16) << 8) | (shift0 as u16);
-            ((val >> (8 - shift_offset)) & 0xff) as u8
+            let val = ((machine.shift1 as u16) << 8) | (machine.shift0 as u16);
+            ((val >> (8 - machine.shift_offset)) & 0xff) as u8
         }
         _ => panic!("invalid port {}", port),
-    }
+    };
+    machine
 }
 
-fn machine_output(mut machine: Machine8080, port: u8, value: u8) -> Machine8080 {
+fn machine_output(mut machine: Machine8080, port: u8) -> Machine8080 {
+    let value = machine.emu_state.a;
     match port {
         0x02 => {
             machine.shift_offset = value & 0x7;
@@ -269,7 +308,8 @@ fn machine_output(mut machine: Machine8080, port: u8, value: u8) -> Machine8080 
     machine
 }
 
-fn generate_interupt(state: State8080, interupt_num: u16) -> State8080 {
+fn generate_interupt(mut state: State8080, interupt_num: u16) -> State8080 {
+    state.int_enable = 0x0;
     do_call(state, interupt_num * 8)
 }
 
