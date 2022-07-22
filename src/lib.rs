@@ -8,6 +8,7 @@ use sdl2::pixels::PixelFormatEnum;
 use sdl2::render::Texture;
 use sdl2::surface::Surface;
 use std::io::prelude::*;
+use std::ops::Range;
 use std::path::Path;
 use std::thread;
 use std::time::Duration;
@@ -46,6 +47,7 @@ pub struct State8080 {
     sp: u16,
     pc: u16,
     pub memory: Vec<u8>,
+    ram_region: std::ops::Range<u16>,
     cc: ConditionCodes,
     int_enable: u8,
     program_len: usize,
@@ -64,6 +66,7 @@ impl State8080 {
             sp: 0,
             pc: 0,
             memory: Vec::new(),
+            ram_region: 0x0000..0xffff,
             cc: ConditionCodes::default(),
             int_enable: 0,
             program_len: 0,
@@ -132,6 +135,7 @@ pub fn create_initial_invaders_machine(
     let mut machine = MachineInvaders::new();
     machine.state8080 =
         create_initial_emustate(filename, start_pc).expect("couldn't initialize 8080 cpu state");
+    machine.state8080.ram_region = 0x2000..0x3fff;
     Ok(machine)
 }
 
@@ -505,8 +509,10 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
         }
         0xc5 => {
             // PUSH B
-            state.memory[state.sp as usize - 2] = state.c;
-            state.memory[state.sp as usize - 1] = state.b;
+            state.memory =
+                emu8080_write_mem(state.memory, &state.ram_region, state.sp - 2, state.c);
+            state.memory =
+                emu8080_write_mem(state.memory, &state.ram_region, state.sp - 1, state.b);
             state.sp -= 2;
         }
         0xc6 | 0xce | 0xd6 | 0xde | 0xe6 | 0xee | 0xf6 | 0xfe => {
@@ -526,8 +532,10 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
         }
         0xd5 => {
             // PUSH D
-            state.memory[state.sp as usize - 2] = state.e;
-            state.memory[state.sp as usize - 1] = state.d;
+            state.memory =
+                emu8080_write_mem(state.memory, &state.ram_region, state.sp - 2, state.e);
+            state.memory =
+                emu8080_write_mem(state.memory, &state.ram_region, state.sp - 1, state.d);
             state.sp -= 2;
         }
         0xe1 => {
@@ -542,13 +550,15 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             let l = state.l;
             state.l = state.memory[state.sp as usize];
             state.h = state.memory[state.sp as usize + 1];
-            state.memory[state.sp as usize] = l;
-            state.memory[state.sp as usize + 1] = h;
+            state.memory = emu8080_write_mem(state.memory, &state.ram_region, state.sp, l);
+            state.memory = emu8080_write_mem(state.memory, &state.ram_region, state.sp + 1, h);
         }
         0xe5 => {
             // PUSH H
-            state.memory[state.sp as usize - 2] = state.l;
-            state.memory[state.sp as usize - 1] = state.h;
+            let h = state.h;
+            let l = state.l;
+            state.memory = emu8080_write_mem(state.memory, &state.ram_region, state.sp - 2, l);
+            state.memory = emu8080_write_mem(state.memory, &state.ram_region, state.sp - 1, h);
             state.sp -= 2;
         }
         0xe9 => {
@@ -582,12 +592,18 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
         }
         0xf5 => {
             // PUSH PSW
-            state.memory[state.sp as usize - 2] = state.cc.z
-                | state.cc.s << 1
-                | state.cc.p << 2
-                | state.cc.cy << 3
-                | state.cc.ac << 4;
-            state.memory[state.sp as usize - 1] = state.a;
+            state.memory = emu8080_write_mem(
+                state.memory,
+                &state.ram_region,
+                state.sp - 2,
+                state.cc.z
+                    | state.cc.s << 1
+                    | state.cc.p << 2
+                    | state.cc.cy << 3
+                    | state.cc.ac << 4,
+            );
+            state.memory =
+                emu8080_write_mem(state.memory, &state.ram_region, state.sp - 1, state.a);
             state.sp -= 2;
         }
         0xf9 => {
@@ -736,7 +752,7 @@ fn emu8080_inr(mut state: State8080, op: u8) -> State8080 {
             let addr = addr_from_reg_pair(state.h, state.l);
             let m = state.memory[addr as usize] as u16;
             let answer = m + 1;
-            state.memory[addr as usize] = answer as u8;
+            state.memory = emu8080_write_mem(state.memory, &state.ram_region, addr, answer as u8);
             state.cc = calc_conditions(state.cc, answer & 0xff);
         }
         0x3c => {
@@ -749,6 +765,17 @@ fn emu8080_inr(mut state: State8080, op: u8) -> State8080 {
         _ => panic!("Unimplemented INR Op code {:#04x}", op),
     }
     state
+}
+
+fn emu8080_write_mem(mut memory: Vec<u8>, ram_region: &Range<u16>, addr: u16, val: u8) -> Vec<u8> {
+    if addr < ram_region.start {
+        return memory;
+    }
+    if addr > ram_region.end {
+        return memory;
+    }
+    memory[addr as usize] = val;
+    memory
 }
 
 fn emu8080_dcr(mut state: State8080, op: u8) -> State8080 {
@@ -800,7 +827,7 @@ fn emu8080_dcr(mut state: State8080, op: u8) -> State8080 {
             let addr = addr_from_reg_pair(state.h, state.l);
             let m = state.memory[addr as usize] as u16;
             let answer = do_sub(m, 1);
-            state.memory[addr as usize] = answer as u8;
+            state.memory = emu8080_write_mem(state.memory, &state.ram_region, addr, answer as u8);
             state.cc = calc_conditions(state.cc, answer & 0xff);
         }
         0x3d => {
@@ -903,7 +930,7 @@ fn emu8080_mvi(mut state: State8080, op: u8) -> State8080 {
         }
         0x36 => {
             let addr = addr_from_reg_pair(state.h, state.l);
-            state.memory[addr as usize] = byte;
+            state.memory = emu8080_write_mem(state.memory, &state.ram_region, addr, byte);
         }
         0x3e => {
             state.a = byte;
@@ -1171,7 +1198,8 @@ fn emu8080_mov(mut state: State8080, op: u8) -> State8080 {
         0x70..=0x77 => {
             // MOV M, *
             let addr = addr_from_reg_pair(state.h, state.l);
-            state.memory[addr as usize] = emu8080_mov_reg(&state, op - 0x70);
+            let val = emu8080_mov_reg(&state, op - 0x70);
+            state.memory = emu8080_write_mem(state.memory, &state.ram_region, addr, val);
         }
         0x78..=0x7f => {
             // MOV A, *
@@ -1187,26 +1215,31 @@ fn emu8080_store(mut state: State8080, op: u8) -> State8080 {
     match op {
         0x02 => {
             // STAX B
+            let a = state.a;
             let addr = addr_from_reg_pair(state.b, state.c);
-            state.memory[addr as usize] = state.a;
+            state.memory = emu8080_write_mem(state.memory, &state.ram_region, addr, a);
         }
         0x12 => {
             // STAX D
+            let a = state.a;
             let addr = addr_from_reg_pair(state.d, state.e);
-            state.memory[addr as usize] = state.a;
+            state.memory = emu8080_write_mem(state.memory, &state.ram_region, addr, a);
         }
         0x22 => {
             // SHLD ${addr}
+            let h = state.h;
+            let l = state.l;
             let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
             state.pc += 2;
-            state.memory[addr as usize] = state.l;
-            state.memory[addr as usize + 1] = state.h;
+            state.memory = emu8080_write_mem(state.memory, &state.ram_region, addr, l);
+            state.memory = emu8080_write_mem(state.memory, &state.ram_region, addr + 1, h);
         }
         0x32 => {
             // STA adr
+            let a = state.a;
             let addr = get_addr_from_bytes(state.pc as usize, &state.memory);
             state.pc += 2;
-            state.memory[addr as usize] = state.a;
+            state.memory = emu8080_write_mem(state.memory, &state.ram_region, addr, a);
         }
         _ => panic!("Unimplemented STORE Op code {:#04x}", op),
     }
@@ -1290,8 +1323,18 @@ fn do_sub(mut a: u16, b: u16) -> u16 {
 }
 
 fn do_call(mut state: State8080, addr: u16) -> State8080 {
-    state.memory[state.sp as usize - 1] = (state.pc >> 8) as u8;
-    state.memory[state.sp as usize - 2] = state.pc as u8;
+    state.memory = emu8080_write_mem(
+        state.memory,
+        &state.ram_region,
+        state.sp - 1,
+        (state.pc >> 8) as u8,
+    );
+    state.memory = emu8080_write_mem(
+        state.memory,
+        &state.ram_region,
+        state.sp - 2,
+        state.pc as u8,
+    );
     state.sp -= 2;
     state.pc = addr;
     state
