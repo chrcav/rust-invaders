@@ -9,7 +9,7 @@ fn main() -> std::io::Result<()> {
         .get_or_insert(String::from("0"))
         .parse()
         .unwrap();
-    let state = create_initial_emustate(&filename, start_pc).unwrap();
+    let state = create_initial_invaders_machine(&filename, start_pc).unwrap();
 
     emu8080::emu8080(state)
 }

@@ -72,17 +72,17 @@ impl State8080 {
 }
 
 #[derive(Default)]
-pub struct Machine8080 {
+pub struct MachineInvaders {
     pause: u8,
     shift_offset: u8,
     shift0: u8,
     shift1: u8,
     read1: u8,
     read2: u8,
-    emu_state: State8080,
+    state8080: State8080,
 }
 
-impl Machine8080 {
+impl MachineInvaders {
     pub fn new() -> Self {
         Self {
             pause: 0,
@@ -91,7 +91,7 @@ impl Machine8080 {
             shift1: 0,
             read1: 1,
             read2: 0,
-            emu_state: State8080::new(),
+            state8080: State8080::new(),
         }
     }
 }
@@ -111,30 +111,36 @@ pc {:04x} sp {:04x}
     }
 }
 
-pub fn create_initial_emustate(filename: &str, start_pc: u16) -> std::io::Result<Machine8080> {
+pub fn create_initial_emustate(filename: &str, start_pc: u16) -> std::io::Result<State8080> {
     let mut f = std::fs::File::open(filename)?;
-    let mut machine = Machine8080::new();
-    machine
-        .emu_state
+    let mut state = State8080::new();
+    state
         .memory
         .resize_with(start_pc as usize, Default::default);
     // read the whole file
-    f.read_to_end(&mut machine.emu_state.memory)?;
-    machine.emu_state.program_len = machine.emu_state.memory.len();
-    machine
-        .emu_state
-        .memory
-        .resize_with(65535, Default::default);
-    machine.emu_state.pc = start_pc;
+    f.read_to_end(&mut state.memory)?;
+    state.program_len = state.memory.len();
+    state.memory.resize_with(65535, Default::default);
+    state.pc = start_pc;
+    Ok(state)
+}
+
+pub fn create_initial_invaders_machine(
+    filename: &str,
+    start_pc: u16,
+) -> std::io::Result<MachineInvaders> {
+    let mut machine = MachineInvaders::new();
+    machine.state8080 =
+        create_initial_emustate(filename, start_pc).expect("couldn't initialize 8080 cpu state");
     Ok(machine)
 }
 
-pub fn emu8080(mut machine: Machine8080) -> std::io::Result<()> {
+pub fn emu8080(mut machine: MachineInvaders) -> std::io::Result<()> {
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
 
     let window = video_subsystem
-        .window("rust-sdl2 demo", 1024, 896)
+        .window("rust-sdl2 demo", 896, 1024)
         .position_centered()
         .build()
         .unwrap();
@@ -177,18 +183,6 @@ pub fn emu8080(mut machine: Machine8080) -> std::io::Result<()> {
                     keycode: Some(Keycode::D),
                     ..
                 } => machine.read1 |= 0x1 << 6,
-                Event::KeyUp {
-                    keycode: Some(Keycode::Space),
-                    ..
-                } => machine.read1 ^= 0x1 << 4,
-                Event::KeyUp {
-                    keycode: Some(Keycode::A),
-                    ..
-                } => machine.read1 ^= 0x1 << 5,
-                Event::KeyUp {
-                    keycode: Some(Keycode::D),
-                    ..
-                } => machine.read1 ^= 0x1 << 6,
                 _ => {}
             }
         }
@@ -200,15 +194,15 @@ pub fn emu8080(mut machine: Machine8080) -> std::io::Result<()> {
         last_op = Instant::now();
         let now = Instant::now();
         if now.duration_since(last_interrupt) > Duration::new(0, 16666667) {
-            if machine.emu_state.int_enable == 0x1 {
-                machine.emu_state = generate_interupt(machine.emu_state, 2);
+            if machine.state8080.int_enable == 0x1 {
+                machine.state8080 = generate_interupt(machine.state8080, 2);
                 canvas.clear();
                 // The rest of the game loop goes here...
                 let texture_creator = canvas.texture_creator();
 
-                let mut data = pixeldata_from_memory(&machine.emu_state.memory, 0x2400, 0x3fff);
+                let mut data = pixeldata_from_memory(&machine.state8080.memory, 0x2400, 0x3fff);
                 let surface =
-                    Surface::from_data(&mut data[..], 256, 224, 256 * 3, PixelFormatEnum::RGB24)
+                    Surface::from_data(&mut data[..], 224, 256, 224 * 3, PixelFormatEnum::RGB24)
                         .unwrap();
                 surface
                     .save_bmp(Path::new("./invaders.bmp"))
@@ -222,34 +216,34 @@ pub fn emu8080(mut machine: Machine8080) -> std::io::Result<()> {
             }
         }
 
-        let op = machine.emu_state.memory[machine.emu_state.pc as usize];
-        println!(
+        let op = machine.state8080.memory[machine.state8080.pc as usize];
+        /*println!(
             "start state:\n{:02x} {} {}flags:\n{}",
             op,
-            command_format(&machine.emu_state.memory, machine.emu_state.pc as usize, op),
-            machine.emu_state,
-            machine.emu_state.cc
-        );
-        machine.emu_state.pc += 1;
+            command_format(&machine.state8080.memory, machine.state8080.pc as usize, op),
+            machine.state8080,
+            machine.state8080.cc
+        );*/
+        machine.state8080.pc += 1;
         match op {
             0xd3 => {
                 // OUT d8
-                let port = machine.emu_state.memory[machine.emu_state.pc as usize];
-                machine.emu_state.pc += 1;
+                let port = machine.state8080.memory[machine.state8080.pc as usize];
+                machine.state8080.pc += 1;
                 machine = machine_output(machine, port);
             }
             0xdb => {
                 // IN d8
-                let port = machine.emu_state.memory[machine.emu_state.pc as usize];
-                machine.emu_state.pc += 1;
+                let port = machine.state8080.memory[machine.state8080.pc as usize];
+                machine.state8080.pc += 1;
                 machine = machine_input(machine, port);
             }
             _ => {
-                machine.emu_state = emu8080_opcode(machine.emu_state, op);
+                machine.state8080 = emu8080_opcode(machine.state8080, op);
             }
         };
-        //println!("end state:\n{}flags:\n{}", machine.emu_state, machine.emu_state.cc);
-        if machine.emu_state.pc as usize >= machine.emu_state.memory.len() {
+        //println!("end state:\n{}flags:\n{}", machine.state8080, machine.state8080.cc);
+        if machine.state8080.pc as usize >= machine.state8080.memory.len() {
             break;
         }
     }
@@ -279,8 +273,8 @@ fn pixeldata_from_memory(memory: &Vec<u8>, start: u16, end: u16) -> Vec<u8> {
     data
 }
 
-fn machine_input(mut machine: Machine8080, port: u8) -> Machine8080 {
-    machine.emu_state.a = match port {
+fn machine_input(mut machine: MachineInvaders, port: u8) -> MachineInvaders {
+    machine.state8080.a = match port {
         0x01 => machine.read1,
         0x02 => machine.read2,
         0x03 => {
@@ -292,8 +286,8 @@ fn machine_input(mut machine: Machine8080, port: u8) -> Machine8080 {
     machine
 }
 
-fn machine_output(mut machine: Machine8080, port: u8) -> Machine8080 {
-    let value = machine.emu_state.a;
+fn machine_output(mut machine: MachineInvaders, port: u8) -> MachineInvaders {
+    let value = machine.state8080.a;
     match port {
         0x02 => {
             machine.shift_offset = value & 0x7;
