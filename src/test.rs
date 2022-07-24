@@ -47,6 +47,18 @@ fn test_cpudiag() {
 }
 
 #[test]
+fn test_opcode_daa() {
+    let mut state = State8080::new();
+
+    state.a = 0x9b;
+    state = emu8080_opcode(state, 0x27);
+    println!("{:08b}", state.a);
+    assert_eq!(state.a, 0x1);
+    assert_eq!(state.cc.cy, 0x1);
+    assert_eq!(state.cc.ac, 0x1);
+}
+
+#[test]
 fn test_opcode_rlc() {
     let mut state = State8080::new();
 

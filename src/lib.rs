@@ -407,7 +407,6 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state = emu8080_mvi(state, op);
         }
         0x07 => {
-            // TODO: check this
             // RLC
             let mut a = state.a as u16;
             let bit7 = (a >> 7) & 0x1;
@@ -434,7 +433,6 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state = emu8080_dcx(state, op);
         }
         0x0f => {
-            // TODO: check this
             // RRC
             let mut a = state.a;
             let bit0 = a & 0x1;
@@ -450,7 +448,6 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.pc += 2;
         }
         0x17 => {
-            // TODO: check this
             // RAL
             let mut a = state.a as u16;
             let bit7 = (a >> 7) & 0x1;
@@ -470,7 +467,6 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.cc.cy = (answer > 0xff) as u8;
         }
         0x1f => {
-            // TODO: check this
             // RAR
             let mut a = state.a;
             let bit0 = a & 0x1;
@@ -488,6 +484,22 @@ fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
         }
         0x27 => {
             // DAA
+            let mut a_lsb = state.a & 0xf;
+            let mut a_msb = (state.a >> 4) & 0xf;
+            if a_lsb > 0x9 || state.cc.ac == 1 {
+                a_lsb += 0x6;
+            }
+            if a_lsb > 0xf {
+                state.cc.ac = 1;
+                a_msb += (a_lsb >> 4) & 0xf;
+            }
+            if a_msb > 0x9 {
+                a_msb += 6;
+            }
+            if a_lsb > 0xf {
+                state.cc.cy = 1;
+            }
+            state.a = (a_msb << 4) & 0xf0 | (a_lsb & 0xf)
         }
         0x29 => {
             // DAD H
