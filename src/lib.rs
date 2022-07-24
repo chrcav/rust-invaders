@@ -205,6 +205,23 @@ pub fn emu8080(mut machine: MachineInvaders) -> std::io::Result<()> {
                     dump_assembly(&assembly[..end]);
                 }
                 Event::KeyDown {
+                    keycode: Some(Keycode::H),
+                    ..
+                } => {
+                    let mut data = pixeldata_from_memory(&machine.state8080.memory, 0x2400, 0x3fff);
+                    let surface = Surface::from_data(
+                        &mut data[..],
+                        224,
+                        256,
+                        224 * 3,
+                        PixelFormatEnum::RGB24,
+                    )
+                    .unwrap();
+                    surface
+                        .save_bmp(Path::new("./invaders.bmp"))
+                        .expect("unable to write out bmp");
+                }
+                Event::KeyDown {
                     keycode: Some(Keycode::P),
                     ..
                 } => machine.pause = (machine.pause ^ 0x1) & 0x1,
@@ -244,9 +261,6 @@ pub fn emu8080(mut machine: MachineInvaders) -> std::io::Result<()> {
                 let surface =
                     Surface::from_data(&mut data[..], 224, 256, 224 * 3, PixelFormatEnum::RGB24)
                         .unwrap();
-                surface
-                    .save_bmp(Path::new("./invaders.bmp"))
-                    .expect("unable to write out bmp");
                 let texture = Texture::from_surface(&surface, &texture_creator).unwrap();
                 canvas
                     .copy(&texture, None, None)
