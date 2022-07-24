@@ -241,6 +241,22 @@ pub fn emu8080(mut machine: MachineInvaders) -> std::io::Result<()> {
                     keycode: Some(Keycode::D),
                     ..
                 } => machine.read1 |= 0x1 << 6,
+                Event::KeyUp {
+                    keycode: Some(Keycode::Return),
+                    ..
+                } => machine.read1 &= 0xfb,
+                Event::KeyUp {
+                    keycode: Some(Keycode::Space),
+                    ..
+                } => machine.read1 &= 0xef,
+                Event::KeyUp {
+                    keycode: Some(Keycode::A),
+                    ..
+                } => machine.read1 &= 0xdf,
+                Event::KeyUp {
+                    keycode: Some(Keycode::D),
+                    ..
+                } => machine.read1 &= 0xbf,
                 _ => {}
             }
         }
@@ -329,11 +345,7 @@ fn pixeldata_from_memory(memory: &Vec<u8>, start: u16, end: u16) -> Vec<u8> {
 
 fn machine_input(mut machine: MachineInvaders, port: u8) -> MachineInvaders {
     machine.state8080.a = match port {
-        0x01 => {
-            let read1 = machine.read1;
-            machine.read1 = 0x1;
-            read1
-        }
+        0x01 => machine.read1,
         0x02 => machine.read2,
         0x03 => {
             let val = ((machine.shift1 as u16) << 8) | (machine.shift0 as u16);
