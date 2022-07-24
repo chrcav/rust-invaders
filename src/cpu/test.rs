@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn test_cpudiag() {
-    let mut state = create_initial_emustate("cpudiag.bin", 256).unwrap();
+    let mut state = create_initial_emustate("cpudiag.bin", 256, 0x0000..0xffff).unwrap();
 
     state.memory[0] = 0xc9; //RET
     state.memory[5] = 0xc9; //RET
