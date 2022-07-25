@@ -6,13 +6,11 @@ use sdl2::pixels::PixelFormatEnum;
 use sdl2::render::Texture;
 use sdl2::surface::Surface;
 use std::path::Path;
-use std::thread;
 use std::time::Duration;
 use std::time::Instant;
 
 mod cpu;
 
-#[derive(Default)]
 pub struct MachineInvaders {
     pause: u8,
     shift_offset: u8,
@@ -58,15 +56,9 @@ pub fn emu8080(mut machine: MachineInvaders) -> std::io::Result<()> {
         .unwrap();
 
     let mut canvas = window.into_canvas().build().unwrap();
-    let mut last_interrupt = Instant::now();
-    let mut last_op = Instant::now();
+    let mut last_interrupt = 0x2;
+    let mut last_interrupt_time = Instant::now();
     'emu: loop {
-        let now = Instant::now();
-        let time_since_last_op = now.duration_since(last_op);
-        if time_since_last_op < Duration::new(0, 500) {
-            thread::sleep(Duration::new(0, 500) - time_since_last_op);
-        }
-
         let mut event_pump = sdl_context.event_pump().unwrap();
         for event in event_pump.poll_iter() {
             match event {
@@ -107,6 +99,10 @@ pub fn emu8080(mut machine: MachineInvaders) -> std::io::Result<()> {
                     ..
                 } => machine.pause = (machine.pause ^ 0x1) & 0x1,
                 Event::KeyDown {
+                    keycode: Some(Keycode::C),
+                    ..
+                } => machine.read1 |= 0x1,
+                Event::KeyDown {
                     keycode: Some(Keycode::Return),
                     ..
                 } => machine.read1 |= 0x1 << 2,
@@ -122,6 +118,10 @@ pub fn emu8080(mut machine: MachineInvaders) -> std::io::Result<()> {
                     keycode: Some(Keycode::D),
                     ..
                 } => machine.read1 |= 0x1 << 6,
+                Event::KeyUp {
+                    keycode: Some(Keycode::C),
+                    ..
+                } => machine.read1 &= 0xfe,
                 Event::KeyUp {
                     keycode: Some(Keycode::Return),
                     ..
@@ -171,7 +171,6 @@ pub fn emu8080(mut machine: MachineInvaders) -> std::io::Result<()> {
             last_interrupt_time = Instant::now();
         }
 
-        last_op = Instant::now();
         let op = machine.state8080.memory[machine.state8080.pc as usize];
         /*println!(
             "start state:\n{:02x} {}\n{}flags:\n{}",

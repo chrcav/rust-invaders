@@ -5,6 +5,9 @@ pub mod debug;
 
 use std::io::prelude::*;
 use std::ops::Range;
+use std::thread;
+use std::time::Duration;
+use std::time::Instant;
 
 #[derive(Default)]
 pub struct ConditionCodes {
@@ -27,7 +30,6 @@ impl std::fmt::Display for ConditionCodes {
     }
 }
 
-#[derive(Default)]
 pub struct State8080 {
     pub a: u8,
     b: u8,
@@ -44,6 +46,7 @@ pub struct State8080 {
     cc: ConditionCodes,
     int_enable: u8,
     program_len: usize,
+    last_op_time: Instant,
 }
 
 impl State8080 {
@@ -64,6 +67,7 @@ impl State8080 {
             cc: ConditionCodes::default(),
             int_enable: 0,
             program_len: 0,
+            last_op_time: Instant::now(),
         }
     }
 }
@@ -114,6 +118,12 @@ pub fn generate_interrupt(mut state: State8080, interrupt_num: u8) -> State8080 
 }
 
 pub fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
+    let time_since_last_op = state.last_op_time.elapsed();
+    if time_since_last_op < Duration::new(0, 500) {
+        thread::sleep(Duration::new(0, 500) - time_since_last_op);
+    }
+    state.last_op_time = Instant::now();
+
     match op {
         0x00 => {} // NOP
         0x01 => {
