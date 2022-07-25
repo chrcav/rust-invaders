@@ -3,8 +3,10 @@ extern crate sdl2;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
+use sdl2::render::Canvas;
 use sdl2::render::Texture;
 use sdl2::surface::Surface;
+use sdl2::video::Window;
 use std::path::Path;
 use std::time::Duration;
 use std::time::Instant;
@@ -13,6 +15,7 @@ mod cpu;
 
 pub struct MachineInvaders {
     pause: u8,
+    done: u8,
     shift_offset: u8,
     shift0: u8,
     shift1: u8,
@@ -22,12 +25,14 @@ pub struct MachineInvaders {
     p1_left: u8,
     p1_right: u8,
     state8080: cpu::State8080,
+    sdl_context: sdl2::Sdl,
 }
 
 impl MachineInvaders {
     pub fn new() -> Self {
         Self {
             pause: 0,
+            done: 0,
             shift_offset: 0,
             shift0: 0,
             shift1: 0,
@@ -37,6 +42,7 @@ impl MachineInvaders {
             p1_left: 0,
             p1_right: 0,
             state8080: cpu::State8080::new(),
+            sdl_context: sdl2::init().unwrap(),
         }
     }
 }
@@ -48,12 +54,12 @@ pub fn create_initial_invaders_machine(
     let mut machine = MachineInvaders::new();
     machine.state8080 = cpu::create_initial_emustate(filename, start_pc, 0x2000..0x3fff)
         .expect("couldn't initialize 8080 cpu state");
+
     Ok(machine)
 }
 
 pub fn emu8080(mut machine: MachineInvaders) -> std::io::Result<()> {
-    let sdl_context = sdl2::init().unwrap();
-    let video_subsystem = sdl_context.video().unwrap();
+    let video_subsystem = machine.sdl_context.video().unwrap();
 
     let window = video_subsystem
         .window("rust-sdl2 demo", 896, 1024)
@@ -65,88 +71,7 @@ pub fn emu8080(mut machine: MachineInvaders) -> std::io::Result<()> {
     let mut last_interrupt = 0x2;
     let mut last_interrupt_time = Instant::now();
     'emu: loop {
-        let mut event_pump = sdl_context.event_pump().unwrap();
-        for event in event_pump.poll_iter() {
-            match event {
-                Event::Quit { .. }
-                | Event::KeyDown {
-                    keycode: Some(Keycode::Escape),
-                    ..
-                } => break 'emu,
-                Event::KeyDown {
-                    keycode: Some(Keycode::G),
-                    ..
-                } => {
-                    let end = cpu::debug::index_instruction_containing_addr(
-                        &machine.state8080.assembly[..],
-                        0x23ff,
-                    );
-                    cpu::debug::dump_assembly(&machine.state8080.assembly[..end]);
-                }
-                Event::KeyDown {
-                    keycode: Some(Keycode::H),
-                    ..
-                } => {
-                    let mut data = pixeldata_from_memory(&machine.state8080.memory, 0x2400, 0x3fff);
-                    let surface = Surface::from_data(
-                        &mut data[..],
-                        224,
-                        256,
-                        224 * 3,
-                        PixelFormatEnum::RGB24,
-                    )
-                    .unwrap();
-                    surface
-                        .save_bmp(Path::new("./invaders.bmp"))
-                        .expect("unable to write out bmp");
-                }
-                Event::KeyDown {
-                    keycode: Some(Keycode::P),
-                    ..
-                } => machine.pause = (machine.pause ^ 0x1) & 0x1,
-                Event::KeyDown {
-                    keycode: Some(Keycode::C),
-                    ..
-                } => machine.coin_up = 0x1,
-                Event::KeyDown {
-                    keycode: Some(Keycode::Return),
-                    ..
-                } => machine.p1_start = 0x1,
-                Event::KeyDown {
-                    keycode: Some(Keycode::Space),
-                    ..
-                } => machine.p1_shoot = 0x1,
-                Event::KeyDown {
-                    keycode: Some(Keycode::A),
-                    ..
-                } => machine.p1_left = 0x1,
-                Event::KeyDown {
-                    keycode: Some(Keycode::D),
-                    ..
-                } => machine.p1_right = 0x1,
-                Event::KeyUp {
-                    keycode: Some(Keycode::C),
-                    ..
-                } => machine.coin_up = 0x0,
-                Event::KeyUp {
-                    keycode: Some(Keycode::Return),
-                    ..
-                } => machine.p1_start = 0x0,
-                Event::KeyUp {
-                    keycode: Some(Keycode::Space),
-                    ..
-                } => machine.p1_shoot = 0x0,
-                Event::KeyUp {
-                    keycode: Some(Keycode::A),
-                    ..
-                } => machine.p1_left = 0x0,
-                Event::KeyUp {
-                    keycode: Some(Keycode::D),
-                    ..
-                } => machine.p1_right = 0x0,
-                _ => {}
-            }
-        }
+        machine = update_button_state(machine);
         let port1 = create_input_port_byte(&machine, 0x1);
         machine.state8080 = cpu::write_input(machine.state8080, 0x1, port1);
         let port2 = create_input_port_byte(&machine, 0x2);
@@ -161,19 +86,8 @@ pub fn emu8080(mut machine: MachineInvaders) -> std::io::Result<()> {
             if last_interrupt == 0x1 {
                 machine.state8080 = cpu::generate_interrupt(machine.state8080, 2);
                 last_interrupt = 0x2;
-                canvas.clear();
-                // The rest of the game loop goes here...
-                let texture_creator = canvas.texture_creator();
 
-                let mut data = pixeldata_from_memory(&machine.state8080.memory, 0x2400, 0x3fff);
-                let surface =
-                    Surface::from_data(&mut data[..], 224, 256, 224 * 3, PixelFormatEnum::RGB24)
-                        .unwrap();
-                let texture = Texture::from_surface(&surface, &texture_creator).unwrap();
-                canvas
-                    .copy(&texture, None, None)
-                    .expect("couldn't render texture");
-                canvas.present();
+                canvas = draw_screen(canvas, &machine.state8080.memory);
             } else if last_interrupt == 0x2 {
                 machine.state8080 = cpu::generate_interrupt(machine.state8080, 1);
                 last_interrupt = 0x1;
@@ -188,8 +102,110 @@ pub fn emu8080(mut machine: MachineInvaders) -> std::io::Result<()> {
         if cpu::new_output_byte(&machine.state8080, 0x4) {
             machine = machine_output(machine, 0x4);
         }
+
+        if machine.done == 0x1 {
+            break 'emu;
+        }
     }
     Ok(())
+}
+
+fn draw_screen(mut canvas: Canvas<Window>, memory: &Vec<u8>) -> Canvas<Window> {
+    canvas.clear();
+    // The rest of the game loop goes here...
+    let texture_creator = canvas.texture_creator();
+
+    let mut data = pixeldata_from_memory(memory, 0x2400, 0x3fff);
+    let surface =
+        Surface::from_data(&mut data[..], 224, 256, 224 * 3, PixelFormatEnum::RGB24).unwrap();
+    let texture = Texture::from_surface(&surface, &texture_creator).unwrap();
+    canvas
+        .copy(&texture, None, None)
+        .expect("couldn't render texture");
+    canvas.present();
+    canvas
+}
+
+fn update_button_state(mut machine: MachineInvaders) -> MachineInvaders {
+    let mut event_pump = machine.sdl_context.event_pump().unwrap();
+    for event in event_pump.poll_iter() {
+        match event {
+            Event::Quit { .. }
+            | Event::KeyDown {
+                keycode: Some(Keycode::Escape),
+                ..
+            } => machine.done = 0x1,
+            Event::KeyDown {
+                keycode: Some(Keycode::G),
+                ..
+            } => {
+                let end = cpu::debug::index_instruction_containing_addr(
+                    &machine.state8080.assembly[..],
+                    0x23ff,
+                );
+                cpu::debug::dump_assembly(&machine.state8080.assembly[..end]);
+            }
+            Event::KeyDown {
+                keycode: Some(Keycode::H),
+                ..
+            } => {
+                let mut data = pixeldata_from_memory(&machine.state8080.memory, 0x2400, 0x3fff);
+                let surface =
+                    Surface::from_data(&mut data[..], 224, 256, 224 * 3, PixelFormatEnum::RGB24)
+                        .unwrap();
+                surface
+                    .save_bmp(Path::new("./invaders.bmp"))
+                    .expect("unable to write out bmp");
+                println!("created screenshot ./invaders.bmp");
+            }
+            Event::KeyDown {
+                keycode: Some(Keycode::P),
+                ..
+            } => machine.pause = (machine.pause ^ 0x1) & 0x1,
+            Event::KeyDown {
+                keycode: Some(Keycode::C),
+                ..
+            } => machine.coin_up = 0x1,
+            Event::KeyDown {
+                keycode: Some(Keycode::Return),
+                ..
+            } => machine.p1_start = 0x1,
+            Event::KeyDown {
+                keycode: Some(Keycode::Space),
+                ..
+            } => machine.p1_shoot = 0x1,
+            Event::KeyDown {
+                keycode: Some(Keycode::A),
+                ..
+            } => machine.p1_left = 0x1,
+            Event::KeyDown {
+                keycode: Some(Keycode::D),
+                ..
+            } => machine.p1_right = 0x1,
+            Event::KeyUp {
+                keycode: Some(Keycode::C),
+                ..
+            } => machine.coin_up = 0x0,
+            Event::KeyUp {
+                keycode: Some(Keycode::Return),
+                ..
+            } => machine.p1_start = 0x0,
+            Event::KeyUp {
+                keycode: Some(Keycode::Space),
+                ..
+            } => machine.p1_shoot = 0x0,
+            Event::KeyUp {
+                keycode: Some(Keycode::A),
+                ..
+            } => machine.p1_left = 0x0,
+            Event::KeyUp {
+                keycode: Some(Keycode::D),
+                ..
+            } => machine.p1_right = 0x0,
+            _ => {}
+        }
+    }
+    machine
 }
 
 fn pixeldata_from_memory(memory: &Vec<u8>, start: u16, end: u16) -> Vec<u8> {
