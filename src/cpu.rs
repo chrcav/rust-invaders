@@ -113,10 +113,6 @@ pub fn generate_interrupt(mut state: State8080, interrupt_num: u8) -> State8080 
     }
 }
 
-pub fn are_interrupts_enabled(state: &State8080) -> u8 {
-    state.int_enable
-}
-
 pub fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
     match op {
         0x00 => {} // NOP

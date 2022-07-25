@@ -147,9 +147,10 @@ pub fn emu8080(mut machine: MachineInvaders) -> std::io::Result<()> {
         }
 
         let now = Instant::now();
-        if now.duration_since(last_interrupt) > Duration::new(0, 16666667) {
-            if cpu::are_interrupts_enabled(&machine.state8080) == 0x1 {
+        if now.duration_since(last_interrupt_time) > Duration::new(0, 8333333) {
+            if last_interrupt == 0x1 {
                 machine.state8080 = cpu::generate_interrupt(machine.state8080, 2);
+                last_interrupt = 0x2;
                 canvas.clear();
                 // The rest of the game loop goes here...
                 let texture_creator = canvas.texture_creator();
@@ -163,8 +164,11 @@ pub fn emu8080(mut machine: MachineInvaders) -> std::io::Result<()> {
                     .copy(&texture, None, None)
                     .expect("couldn't render texture");
                 canvas.present();
-                last_interrupt = Instant::now();
+            } else if last_interrupt == 0x2 {
+                machine.state8080 = cpu::generate_interrupt(machine.state8080, 1);
+                last_interrupt = 0x1;
             }
+            last_interrupt_time = Instant::now();
         }
 
         last_op = Instant::now();
