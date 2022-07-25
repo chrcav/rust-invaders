@@ -103,9 +103,14 @@ pub fn create_initial_emustate(
     Ok(state)
 }
 
-pub fn generate_interrupt(mut state: State8080, interupt_num: u16) -> State8080 {
-    state.int_enable = 0x0;
-    do_call(state, interupt_num * 8)
+pub fn generate_interrupt(mut state: State8080, interrupt_num: u8) -> State8080 {
+    if state.int_enable == 0x1 {
+        state.int_enable = 0x0;
+        let rst_opcode = (interrupt_num << 3) | 0xc7;
+        emu8080_opcode(state, rst_opcode)
+    } else {
+        state
+    }
 }
 
 pub fn are_interrupts_enabled(state: &State8080) -> u8 {
@@ -335,6 +340,10 @@ pub fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
         0xc6 | 0xce | 0xd6 | 0xde | 0xe6 | 0xee | 0xf6 | 0xfe => {
             // ADI D8
             state = emu8080_immediate(state, op);
+        }
+        0xc7 | 0xcf | 0xd7 | 0xdf | 0xe7 | 0xef | 0xf7 | 0xff => {
+            // RST
+            state = do_rst(state, op);
         }
         0xd1 => {
             // POP D
@@ -992,6 +1001,11 @@ fn emu8080_ret(mut state: State8080, op: u8) -> State8080 {
         _ => panic!("Unimplemented RET Op code {:#04x}", op),
     }
     state
+}
+
+fn do_rst(state: State8080, op: u8) -> State8080 {
+    let addr = ((op >> 3) & 0x7) * 8;
+    do_call(state, addr as u16)
 }
 
 fn emu8080_mov(mut state: State8080, op: u8) -> State8080 {
