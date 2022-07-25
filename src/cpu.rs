@@ -31,7 +31,7 @@ impl std::fmt::Display for ConditionCodes {
 }
 
 pub struct State8080 {
-    pub a: u8,
+    a: u8,
     b: u8,
     c: u8,
     d: u8,
@@ -39,7 +39,7 @@ pub struct State8080 {
     h: u8,
     l: u8,
     sp: u16,
-    pub pc: u16,
+    pc: u16,
     pub memory: Vec<u8>,
     pub assembly: Vec<debug::Instruction8080>,
     ram_region: std::ops::Range<u16>,
@@ -47,6 +47,9 @@ pub struct State8080 {
     int_enable: u8,
     program_len: usize,
     last_op_time: Instant,
+    input_ports: [u8; 256],
+    output_ports: [u8; 256],
+    output_port_dirty: [u8; 256],
 }
 
 impl State8080 {
@@ -68,6 +71,9 @@ impl State8080 {
             int_enable: 0,
             program_len: 0,
             last_op_time: Instant::now(),
+            input_ports: [0; 256],
+            output_ports: [0; 256],
+            output_port_dirty: [0; 256],
         }
     }
 }
@@ -117,7 +123,39 @@ pub fn generate_interrupt(mut state: State8080, interrupt_num: u8) -> State8080 
     }
 }
 
+fn read_input(state: &State8080, port: u8) -> u8 {
+    state.input_ports[port as usize]
+}
+pub fn write_input(mut state: State8080, port: u8, value: u8) -> State8080 {
+    state.input_ports[port as usize] = value;
+    state
+}
+pub fn read_output(state: &State8080, port: u8) -> u8 {
+    state.output_ports[port as usize]
+}
+pub fn new_output_byte(state: &State8080, port: u8) -> bool {
+    state.output_port_dirty[port as usize] == 0x1
+}
+fn write_output(mut state: State8080, port: u8, value: u8) -> State8080 {
+    state.output_ports[port as usize] = value;
+    state.output_port_dirty[port as usize] = 0x1;
+    state
+}
+
+pub fn emu8080(mut state: State8080) -> State8080 {
+    let op = state.memory[state.pc as usize];
+    state.pc += 1;
+    emu8080_opcode(state, op)
+}
+
 pub fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
+    /*println!(
+        "start state:\n{:02x} {}\n{}flags:\n{}",
+        op,
+        instruction_format(&state.memory, state.pc as usize, op),
+        state,
+        state.cc
+    );*/
     let time_since_last_op = state.last_op_time.elapsed();
     if time_since_last_op < Duration::new(0, 500) {
         thread::sleep(Duration::new(0, 500) - time_since_last_op);
@@ -359,8 +397,10 @@ pub fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
         }
         0xd3 => {
             // OUT D8
-            // TODO implement
+            let port = state.memory[state.pc as usize];
             state.pc += 1;
+            let a = state.a;
+            state = write_output(state, port, a)
         }
         0xd5 => {
             // PUSH D
@@ -369,6 +409,12 @@ pub fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             state.memory =
                 emu8080_write_mem(state.memory, &state.ram_region, state.sp - 1, state.d);
             state.sp -= 2;
+        }
+        0xdb => {
+            // IN D8
+            let port = state.memory[state.pc as usize];
+            state.pc += 1;
+            state.a = read_input(&state, port);
         }
         0xe1 => {
             // POP H
@@ -457,6 +503,7 @@ pub fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             )
         }
     };
+    //println!("end state:\n{}flags:\n{}", state, state.cc);
     state
 }
 

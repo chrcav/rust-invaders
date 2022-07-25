@@ -16,8 +16,11 @@ pub struct MachineInvaders {
     shift_offset: u8,
     shift0: u8,
     shift1: u8,
-    read1: u8,
-    read2: u8,
+    coin_up: u8,
+    p1_start: u8,
+    p1_shoot: u8,
+    p1_left: u8,
+    p1_right: u8,
     state8080: cpu::State8080,
 }
 
@@ -28,8 +31,11 @@ impl MachineInvaders {
             shift_offset: 0,
             shift0: 0,
             shift1: 0,
-            read1: 0,
-            read2: 0,
+            coin_up: 0,
+            p1_start: 0,
+            p1_shoot: 0,
+            p1_left: 0,
+            p1_right: 0,
             state8080: cpu::State8080::new(),
         }
     }
@@ -101,46 +107,50 @@ pub fn emu8080(mut machine: MachineInvaders) -> std::io::Result<()> {
                 Event::KeyDown {
                     keycode: Some(Keycode::C),
                     ..
-                } => machine.read1 |= 0x1,
+                } => machine.coin_up = 0x1,
                 Event::KeyDown {
                     keycode: Some(Keycode::Return),
                     ..
-                } => machine.read1 |= 0x1 << 2,
+                } => machine.p1_start = 0x1,
                 Event::KeyDown {
                     keycode: Some(Keycode::Space),
                     ..
-                } => machine.read1 |= 0x1 << 4,
+                } => machine.p1_shoot = 0x1,
                 Event::KeyDown {
                     keycode: Some(Keycode::A),
                     ..
-                } => machine.read1 |= 0x1 << 5,
+                } => machine.p1_left = 0x1,
                 Event::KeyDown {
                     keycode: Some(Keycode::D),
                     ..
-                } => machine.read1 |= 0x1 << 6,
+                } => machine.p1_right = 0x1,
                 Event::KeyUp {
                     keycode: Some(Keycode::C),
                     ..
-                } => machine.read1 &= 0xfe,
+                } => machine.coin_up = 0x0,
                 Event::KeyUp {
                     keycode: Some(Keycode::Return),
                     ..
-                } => machine.read1 &= 0xfb,
+                } => machine.p1_start = 0x0,
                 Event::KeyUp {
                     keycode: Some(Keycode::Space),
                     ..
-                } => machine.read1 &= 0xef,
+                } => machine.p1_shoot = 0x0,
                 Event::KeyUp {
                     keycode: Some(Keycode::A),
                     ..
-                } => machine.read1 &= 0xdf,
+                } => machine.p1_left = 0x0,
                 Event::KeyUp {
                     keycode: Some(Keycode::D),
                     ..
-                } => machine.read1 &= 0xbf,
+                } => machine.p1_right = 0x0,
                 _ => {}
             }
         }
+        let port1 = create_input_port_byte(&machine, 0x1);
+        machine.state8080 = cpu::write_input(machine.state8080, 0x1, port1);
+        let port2 = create_input_port_byte(&machine, 0x2);
+        machine.state8080 = cpu::write_input(machine.state8080, 0x2, port2);
 
         if machine.pause == 0x1 {
             continue 'emu;
@@ -170,36 +180,13 @@ pub fn emu8080(mut machine: MachineInvaders) -> std::io::Result<()> {
             }
             last_interrupt_time = Instant::now();
         }
+        machine.state8080 = cpu::emu8080(machine.state8080);
 
-        let op = machine.state8080.memory[machine.state8080.pc as usize];
-        /*println!(
-            "start state:\n{:02x} {}\n{}flags:\n{}",
-            op,
-            instruction_format(&machine.state8080.memory, machine.state8080.pc as usize, op),
-            machine.state8080,
-            machine.state8080.cc
-        );*/
-        machine.state8080.pc += 1;
-        match op {
-            0xd3 => {
-                // OUT d8
-                let port = machine.state8080.memory[machine.state8080.pc as usize];
-                machine.state8080.pc += 1;
-                machine = machine_output(machine, port);
-            }
-            0xdb => {
-                // IN d8
-                let port = machine.state8080.memory[machine.state8080.pc as usize];
-                machine.state8080.pc += 1;
-                machine = machine_input(machine, port);
-            }
-            _ => {
-                machine.state8080 = cpu::emu8080_opcode(machine.state8080, op);
-            }
-        };
-        //println!("end state:\n{}flags:\n{}", machine.state8080, machine.state8080.cc);
-        if machine.state8080.pc as usize >= machine.state8080.memory.len() {
-            break;
+        if cpu::new_output_byte(&machine.state8080, 0x2) {
+            machine = machine_output(machine, 0x2);
+        }
+        if cpu::new_output_byte(&machine.state8080, 0x4) {
+            machine = machine_output(machine, 0x4);
         }
     }
     Ok(())
@@ -227,28 +214,43 @@ fn pixeldata_from_memory(memory: &Vec<u8>, start: u16, end: u16) -> Vec<u8> {
     data
 }
 
-fn machine_input(mut machine: MachineInvaders, port: u8) -> MachineInvaders {
-    machine.state8080.a = match port {
-        0x01 => machine.read1,
-        0x02 => machine.read2,
-        0x03 => {
-            let val = ((machine.shift1 as u16) << 8) | (machine.shift0 as u16);
-            ((val >> (8 - machine.shift_offset)) & 0xff) as u8
+fn create_input_port_byte(machine: &MachineInvaders, port: u8) -> u8 {
+    let mut byte: u8 = 0;
+    match port {
+        0x01 => {
+            byte |= machine.coin_up;
+            byte |= machine.p1_start << 2;
+            byte |= 0x1 << 3;
+            byte |= machine.p1_shoot << 4;
+            byte |= machine.p1_left << 5;
+            byte |= machine.p1_right << 6;
         }
-        _ => panic!("invalid port {}", port),
-    };
-    machine
+        _ => {}
+    }
+    byte
 }
 
 fn machine_output(mut machine: MachineInvaders, port: u8) -> MachineInvaders {
-    let value = machine.state8080.a;
+    let value = cpu::read_output(&machine.state8080, port);
     match port {
         0x02 => {
             machine.shift_offset = value & 0x7;
+            let val = ((machine.shift1 as u16) << 8) | (machine.shift0 as u16);
+            machine.state8080 = cpu::write_input(
+                machine.state8080,
+                0x3,
+                ((val >> (8 - machine.shift_offset)) & 0xff) as u8,
+            );
         }
         0x04 => {
             machine.shift0 = machine.shift1;
             machine.shift1 = value;
+            let val = ((machine.shift1 as u16) << 8) | (machine.shift0 as u16);
+            machine.state8080 = cpu::write_input(
+                machine.state8080,
+                0x3,
+                ((val >> (8 - machine.shift_offset)) & 0xff) as u8,
+            );
         }
         0x03 | 0x05 | 0x06 => {}
         _ => panic!("invalid port {}", port),
