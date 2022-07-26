@@ -72,14 +72,15 @@ pub fn emu8080(mut machine: MachineInvaders) -> std::io::Result<()> {
     let mut last_interrupt_time = Instant::now();
     'emu: loop {
         machine = update_button_state(machine);
-        let port1 = create_input_port_byte(&machine, 0x1);
-        machine.state8080 = cpu::write_input(machine.state8080, 0x1, port1);
-        let port2 = create_input_port_byte(&machine, 0x2);
-        machine.state8080 = cpu::write_input(machine.state8080, 0x2, port2);
 
         if machine.pause == 0x1 {
             continue 'emu;
         }
+
+        let port1 = create_input_port_byte(&machine, 0x1);
+        machine.state8080 = cpu::write_input(machine.state8080, 0x1, port1);
+        let port2 = create_input_port_byte(&machine, 0x2);
+        machine.state8080 = cpu::write_input(machine.state8080, 0x2, port2);
 
         let now = Instant::now();
         if now.duration_since(last_interrupt_time) > Duration::new(0, 8333333) {

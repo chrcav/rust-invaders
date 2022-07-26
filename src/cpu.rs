@@ -149,13 +149,6 @@ pub fn emu8080(mut state: State8080) -> State8080 {
 }
 
 pub fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
-    /*println!(
-        "start state:\n{:02x} {}\n{}flags:\n{}",
-        op,
-        instruction_format(&state.memory, state.pc as usize, op),
-        state,
-        state.cc
-    );*/
     let time_since_last_op = state.last_op_time.elapsed();
     if time_since_last_op < Duration::new(0, 500) {
         thread::sleep(Duration::new(0, 500) - time_since_last_op);
@@ -268,22 +261,17 @@ pub fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
         }
         0x27 => {
             // DAA
-            let mut a_lsb = state.a & 0xf;
-            let mut a_msb = (state.a >> 4) & 0xf;
-            if a_lsb > 0x9 || state.cc.ac == 1 {
-                a_lsb += 0x6;
+            let a = state.a as u16;
+            let mut answer = a & 0xf;
+            if answer > 0x9 || state.cc.ac == 1 {
+                answer += 0x6;
             }
-            if a_lsb > 0xf {
-                state.cc.ac = 1;
-                a_msb += (a_lsb >> 4) & 0xf;
+            answer += a & 0xf0;
+            if answer & 0xf0 > 0x90 {
+                answer += 0x60;
             }
-            if a_msb > 0x9 {
-                a_msb += 6;
-            }
-            if a_lsb > 0xf {
-                state.cc.cy = 1;
-            }
-            state.a = (a_msb << 4) & 0xf0 | (a_lsb & 0xf)
+            state.a = answer as u8;
+            state.cc = calc_conditions(state.cc, answer);
         }
         0x29 => {
             // DAD H
@@ -503,7 +491,6 @@ pub fn emu8080_opcode(mut state: State8080, op: u8) -> State8080 {
             )
         }
     };
-    //println!("end state:\n{}flags:\n{}", state, state.cc);
     state
 }
 
