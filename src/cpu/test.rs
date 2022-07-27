@@ -55,7 +55,6 @@ fn test_opcode_daa() {
     println!("{:08b}", state.a);
     assert_eq!(state.a, 0x1);
     assert_eq!(state.cc.cy, 0x1);
-    assert_eq!(state.cc.ac, 0x1);
 }
 
 #[test]

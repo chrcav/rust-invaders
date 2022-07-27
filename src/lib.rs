@@ -66,7 +66,7 @@ pub fn create_initial_invaders_machine(
     Ok(machine)
 }
 
-pub fn emu8080(mut machine: MachineInvaders) -> std::io::Result<()> {
+pub fn emu_invaders(mut machine: MachineInvaders) -> std::io::Result<()> {
     let video_subsystem = machine.sdl_context.video().unwrap();
 
     let window = video_subsystem

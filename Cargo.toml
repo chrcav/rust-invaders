@@ -1,5 +1,5 @@
 [package]
-name = "emu8080"
+name = "rustinvaders"
 version = "0.1.0"
 authors = ["Chris Cavanaugh <chriswcav@gmail.com>"]
 edition = "2018"

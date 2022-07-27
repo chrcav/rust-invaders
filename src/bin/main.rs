@@ -1,4 +1,4 @@
-use emu8080::*;
+use rustinvaders::*;
 
 fn main() -> std::io::Result<()> {
     let mut args = std::env::args();
@@ -11,5 +11,5 @@ fn main() -> std::io::Result<()> {
         .unwrap();
     let state = create_initial_invaders_machine(&filename, start_pc).unwrap();
 
-    emu8080::emu8080(state)
+    rustinvaders::emu_invaders(state)
 }
