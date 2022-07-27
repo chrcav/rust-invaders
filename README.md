@@ -8,10 +8,15 @@ In order to run: `cargo r` it expects the file `invaders.bin` in the current wor
 
 ## Controls
 
-* Use `A` to move left and `D` to move right as player 1.
+* player 1
+  * Use `A` to move left and `D` to move right as player 1.
+  * `1` is 1 player start
+  * `Space` to shoot
+* player 2
+  * Use `Left` to move left and `Right` to move right as player 1.
+  * `2` is 2 player start
+  * `X` to shoot
 * `C` adds a credit
-* `Enter` is 1 player start
-* `Space` to shoot
 * `P` pauses processing op codes
 * `G` dumps the assembly
 * `H` takes a screen shot
@@ -20,4 +25,3 @@ In order to run: `cargo r` it expects the file `invaders.bin` in the current wor
 ## Missing Features
 
 - [ ] Sound
-* [ ] Player 2 controls

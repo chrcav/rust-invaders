@@ -24,6 +24,10 @@ pub struct MachineInvaders {
     p1_shoot: u8,
     p1_left: u8,
     p1_right: u8,
+    p2_start: u8,
+    p2_shoot: u8,
+    p2_left: u8,
+    p2_right: u8,
     state8080: cpu::State8080,
     sdl_context: sdl2::Sdl,
 }
@@ -41,6 +45,10 @@ impl MachineInvaders {
             p1_shoot: 0,
             p1_left: 0,
             p1_right: 0,
+            p2_start: 0,
+            p2_shoot: 0,
+            p2_left: 0,
+            p2_right: 0,
             state8080: cpu::State8080::new(),
             sdl_context: sdl2::init().unwrap(),
         }
@@ -163,12 +171,18 @@ fn update_button_state(mut machine: MachineInvaders) -> MachineInvaders {
                 keycode: Some(Keycode::P),
                 ..
             } => machine.pause = (machine.pause ^ 0x1) & 0x1,
+
             Event::KeyDown {
                 keycode: Some(Keycode::C),
                 ..
             } => machine.coin_up = 0x1,
+            Event::KeyUp {
+                keycode: Some(Keycode::C),
+                ..
+            } => machine.coin_up = 0x0,
+
             Event::KeyDown {
-                keycode: Some(Keycode::Return),
+                keycode: Some(Keycode::Num1),
                 ..
             } => machine.p1_start = 0x1,
             Event::KeyDown {
@@ -184,11 +198,7 @@ fn update_button_state(mut machine: MachineInvaders) -> MachineInvaders {
                 ..
             } => machine.p1_right = 0x1,
             Event::KeyUp {
-                keycode: Some(Keycode::C),
-                ..
-            } => machine.coin_up = 0x0,
-            Event::KeyUp {
-                keycode: Some(Keycode::Return),
+                keycode: Some(Keycode::Num1),
                 ..
             } => machine.p1_start = 0x0,
             Event::KeyUp {
@@ -203,6 +213,40 @@ fn update_button_state(mut machine: MachineInvaders) -> MachineInvaders {
                 keycode: Some(Keycode::D),
                 ..
             } => machine.p1_right = 0x0,
+
+            Event::KeyDown {
+                keycode: Some(Keycode::Num2),
+                ..
+            } => machine.p2_start = 0x1,
+            Event::KeyDown {
+                keycode: Some(Keycode::X),
+                ..
+            } => machine.p2_shoot = 0x1,
+            Event::KeyDown {
+                keycode: Some(Keycode::Left),
+                ..
+            } => machine.p2_left = 0x1,
+            Event::KeyDown {
+                keycode: Some(Keycode::Right),
+                ..
+            } => machine.p2_right = 0x1,
+
+            Event::KeyUp {
+                keycode: Some(Keycode::Num2),
+                ..
+            } => machine.p2_start = 0x0,
+            Event::KeyUp {
+                keycode: Some(Keycode::X),
+                ..
+            } => machine.p2_shoot = 0x0,
+            Event::KeyUp {
+                keycode: Some(Keycode::Left),
+                ..
+            } => machine.p2_left = 0x0,
+            Event::KeyUp {
+                keycode: Some(Keycode::Right),
+                ..
+            } => machine.p2_right = 0x0,
             _ => {}
         }
     }
@@ -236,11 +280,17 @@ fn create_input_port_byte(machine: &MachineInvaders, port: u8) -> u8 {
     match port {
         0x01 => {
             byte |= machine.coin_up;
+            byte |= machine.p2_start << 1;
             byte |= machine.p1_start << 2;
             byte |= 0x1 << 3;
             byte |= machine.p1_shoot << 4;
             byte |= machine.p1_left << 5;
             byte |= machine.p1_right << 6;
+        }
+        0x02 => {
+            byte |= machine.p2_shoot << 4;
+            byte |= machine.p2_left << 5;
+            byte |= machine.p2_right << 6;
         }
         _ => {}
     }
