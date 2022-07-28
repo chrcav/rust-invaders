@@ -16,12 +16,7 @@ fn test_cpudiag() {
     loop {
         let op = state.memory[state.pc as usize];
         println!("start state:\n{:02x} {}{}", op, state, state.cc);
-        state.pc += 1;
-        match op {
-            _ => {
-                state = emu8080_opcode(state, op);
-            }
-        };
+        state = emu8080(state);
         //println!("end state:\n{:02x} {}{}", op, state, state.cc);
         if state.pc as usize >= state.program_len {
             break;
