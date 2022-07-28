@@ -1,5 +1,6 @@
 extern crate sdl2;
 
+use rodio::{source::Source, Decoder, OutputStream, Sink};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
@@ -7,6 +8,8 @@ use sdl2::render::Canvas;
 use sdl2::render::Texture;
 use sdl2::surface::Surface;
 use sdl2::video::Window;
+use std::fs::File;
+use std::io::BufReader;
 use std::path::Path;
 use std::time::Duration;
 use std::time::Instant;
@@ -19,6 +22,10 @@ pub struct MachineInvaders {
     shift_offset: u8,
     shift0: u8,
     shift1: u8,
+    out_port3: u8,
+    last_out_port3: u8,
+    out_port5: u8,
+    last_out_port5: u8,
     coin_up: u8,
     p1_start: u8,
     p1_shoot: u8,
@@ -40,6 +47,10 @@ impl MachineInvaders {
             shift_offset: 0,
             shift0: 0,
             shift1: 0,
+            out_port3: 0,
+            last_out_port3: 0,
+            out_port5: 0,
+            last_out_port5: 0,
             coin_up: 0,
             p1_start: 0,
             p1_shoot: 0,
@@ -76,6 +87,26 @@ pub fn emu_invaders(mut machine: MachineInvaders) -> std::io::Result<()> {
         .unwrap();
 
     let mut canvas = window.into_canvas().build().unwrap();
+
+    let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+    // created looped ufo sink
+    let file = BufReader::new(File::open("sounds/0.wav").unwrap());
+    let source = Decoder::new_looped(file).unwrap();
+    let sink0 = Sink::try_new(&stream_handle).unwrap();
+    sink0.append(source);
+    sink0.pause();
+
+    // save copies of all used sounds
+    let mut buffed = Vec::new();
+    for i in 0..=18 {
+        if i == 10 {
+            continue;
+        }
+        let file = BufReader::new(File::open(format!("sounds/{}.wav", i)).unwrap());
+        let source = Decoder::new(file).unwrap();
+        buffed.push(source.buffered());
+    }
+
     let mut last_interrupt = 0x2;
     let mut last_interrupt_time = Instant::now();
     'emu: loop {
@@ -108,8 +139,61 @@ pub fn emu_invaders(mut machine: MachineInvaders) -> std::io::Result<()> {
         if cpu::new_output_byte(&machine.state8080, 0x2) {
             machine = machine_output(machine, 0x2);
         }
+        if cpu::new_output_byte(&machine.state8080, 0x3) {
+            machine = machine_output(machine, 0x3);
+            if machine.out_port3 & 0x1 == 0x1 && machine.last_out_port3 & 0x1 != 0x1 {
+                sink0.play();
+            } else if machine.out_port3 & 0x1 != 0x1 && machine.last_out_port3 & 0x1 == 0x1 {
+                sink0.pause();
+            }
+            if machine.out_port3 & 0x2 == 0x2 && machine.last_out_port3 & 0x2 != 0x2 {
+                stream_handle
+                    .play_raw(buffed[1].clone().convert_samples())
+                    .expect("unable to play: sounds/1.wav");
+            }
+            if machine.out_port3 & 0x4 == 0x4 && machine.last_out_port3 & 0x4 != 0x4 {
+                stream_handle
+                    .play_raw(buffed[2].clone().convert_samples())
+                    .expect("unable to play: sounds/2.wav");
+            }
+            if machine.out_port3 & 0x8 == 0x8 && machine.last_out_port3 & 0x8 != 0x8 {
+                stream_handle
+                    .play_raw(buffed[3].clone().convert_samples())
+                    .expect("unable to play: sounds/3.wav");
+            }
+            machine.last_out_port3 = machine.out_port3;
+        }
         if cpu::new_output_byte(&machine.state8080, 0x4) {
             machine = machine_output(machine, 0x4);
+        }
+        if cpu::new_output_byte(&machine.state8080, 0x5) {
+            machine = machine_output(machine, 0x5);
+            if machine.out_port5 & 0x1 == 0x1 && machine.last_out_port5 & 0x1 != 0x1 {
+                stream_handle
+                    .play_raw(buffed[4].clone().convert_samples())
+                    .expect("unable to play: sounds/1.wav");
+            }
+            if machine.out_port5 & 0x2 == 0x2 && machine.last_out_port5 & 0x2 != 0x2 {
+                stream_handle
+                    .play_raw(buffed[5].clone().convert_samples())
+                    .expect("unable to play: sounds/5.wav");
+            }
+            if machine.out_port5 & 0x4 == 0x4 && machine.last_out_port5 & 0x4 != 0x4 {
+                stream_handle
+                    .play_raw(buffed[6].clone().convert_samples())
+                    .expect("unable to play: sounds/6.wav");
+            }
+            if machine.out_port5 & 0x8 == 0x8 && machine.last_out_port5 & 0x8 != 0x8 {
+                stream_handle
+                    .play_raw(buffed[7].clone().convert_samples())
+                    .expect("unable to play: sounds/7.wav");
+            }
+            if machine.out_port5 & 0x10 == 0x10 && machine.last_out_port5 & 0x10 != 0x10 {
+                stream_handle
+                    .play_raw(buffed[8].clone().convert_samples())
+                    .expect("unable to play: sounds/8.wav");
+            }
+            machine.last_out_port5 = machine.out_port5;
         }
 
         if machine.done == 0x1 {
@@ -309,6 +393,7 @@ fn machine_output(mut machine: MachineInvaders, port: u8) -> MachineInvaders {
                 ((val >> (8 - machine.shift_offset)) & 0xff) as u8,
             );
         }
+        0x03 => machine.out_port3 = value,
         0x04 => {
             machine.shift0 = machine.shift1;
             machine.shift1 = value;
@@ -319,7 +404,8 @@ fn machine_output(mut machine: MachineInvaders, port: u8) -> MachineInvaders {
                 ((val >> (8 - machine.shift_offset)) & 0xff) as u8,
             );
         }
-        0x03 | 0x05 | 0x06 => {}
+        0x05 => machine.out_port5 = value,
+        0x06 => {}
         _ => panic!("invalid port {}", port),
     }
     machine

@@ -22,6 +22,15 @@ In order to run: `cargo r` it expects the file `invaders.bin` in the current wor
 * `H` takes a screen shot
 * `Escape` exits
 
-## Missing Features
+## Sounds
 
-- [ ] Sound
+Expects sounds to be in a folder ./sounds with the following names:
+
+| filename     |  in-game sound   |
+|--------------|------------------|
+|0.wav         | ufo loop         |
+|1.wav         | player shot      |
+|2.wav         | player death     |
+|3.wav         | invader death    |
+|4.wav - 7.wav | invader movement |
+|8.wav         | ufo death        |
