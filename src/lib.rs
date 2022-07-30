@@ -89,22 +89,28 @@ pub fn emu_invaders(mut machine: MachineInvaders) -> std::io::Result<()> {
     let mut canvas = window.into_canvas().build().unwrap();
 
     let (_stream, stream_handle) = OutputStream::try_default().unwrap();
-    // created looped ufo sink
-    let file = BufReader::new(File::open("sounds/0.wav").unwrap());
-    let source = Decoder::new_looped(file).unwrap();
     let sink0 = Sink::try_new(&stream_handle).unwrap();
-    sink0.append(source);
     sink0.pause();
+    sink0.set_volume(0.5);
+    // created looped ufo sink
+    let file = File::open("sounds/0.wav");
+    if file.is_ok() {
+        let file = BufReader::new(file.unwrap());
+        let source = Decoder::new_looped(file).unwrap();
+        sink0.append(source);
+    }
 
     // save copies of all used sounds
     let mut buffed = Vec::new();
     for i in 0..=18 {
-        if i == 10 {
-            continue;
+        let file = File::open(format!("sounds/{}.wav", i));
+        if file.is_ok() {
+            let file = BufReader::new(file.unwrap());
+            let source = Decoder::new(file).unwrap();
+            buffed.push(Some(source.buffered()));
+        } else {
+            buffed.push(None);
         }
-        let file = BufReader::new(File::open(format!("sounds/{}.wav", i)).unwrap());
-        let source = Decoder::new(file).unwrap();
-        buffed.push(source.buffered());
     }
 
     let mut last_interrupt = 0x2;
@@ -147,19 +153,28 @@ pub fn emu_invaders(mut machine: MachineInvaders) -> std::io::Result<()> {
                 sink0.pause();
             }
             if machine.out_port3 & 0x2 == 0x2 && machine.last_out_port3 & 0x2 != 0x2 {
-                stream_handle
-                    .play_raw(buffed[1].clone().convert_samples())
-                    .expect("unable to play: sounds/1.wav");
+                if buffed[1].is_some() {
+                    let buf = buffed[1].as_ref().unwrap();
+                    stream_handle
+                        .play_raw(buf.clone().convert_samples())
+                        .expect("unable to play 1.wav");
+                }
             }
             if machine.out_port3 & 0x4 == 0x4 && machine.last_out_port3 & 0x4 != 0x4 {
-                stream_handle
-                    .play_raw(buffed[2].clone().convert_samples())
-                    .expect("unable to play: sounds/2.wav");
+                if buffed[2].is_some() {
+                    let buf = buffed[2].as_ref().unwrap();
+                    stream_handle
+                        .play_raw(buf.clone().convert_samples())
+                        .expect("unable to play 2.wav");
+                }
             }
             if machine.out_port3 & 0x8 == 0x8 && machine.last_out_port3 & 0x8 != 0x8 {
-                stream_handle
-                    .play_raw(buffed[3].clone().convert_samples())
-                    .expect("unable to play: sounds/3.wav");
+                if buffed[3].is_some() {
+                    let buf = buffed[3].as_ref().unwrap();
+                    stream_handle
+                        .play_raw(buf.clone().convert_samples())
+                        .expect("unable to play 3.wav");
+                }
             }
             machine.last_out_port3 = machine.out_port3;
         }
@@ -169,29 +184,44 @@ pub fn emu_invaders(mut machine: MachineInvaders) -> std::io::Result<()> {
         if cpu::new_output_byte(&machine.state8080, 0x5) {
             machine = machine_output(machine, 0x5);
             if machine.out_port5 & 0x1 == 0x1 && machine.last_out_port5 & 0x1 != 0x1 {
-                stream_handle
-                    .play_raw(buffed[4].clone().convert_samples())
-                    .expect("unable to play: sounds/1.wav");
+                if buffed[4].is_some() {
+                    let buf = buffed[4].as_ref().unwrap();
+                    stream_handle
+                        .play_raw(buf.clone().convert_samples())
+                        .expect("unable to play 4.wav");
+                }
             }
             if machine.out_port5 & 0x2 == 0x2 && machine.last_out_port5 & 0x2 != 0x2 {
-                stream_handle
-                    .play_raw(buffed[5].clone().convert_samples())
-                    .expect("unable to play: sounds/5.wav");
+                if buffed[5].is_some() {
+                    let buf = buffed[5].as_ref().unwrap();
+                    stream_handle
+                        .play_raw(buf.clone().convert_samples())
+                        .expect("unable to play 5.wav");
+                }
             }
             if machine.out_port5 & 0x4 == 0x4 && machine.last_out_port5 & 0x4 != 0x4 {
-                stream_handle
-                    .play_raw(buffed[6].clone().convert_samples())
-                    .expect("unable to play: sounds/6.wav");
+                if buffed[6].is_some() {
+                    let buf = buffed[6].as_ref().unwrap();
+                    stream_handle
+                        .play_raw(buf.clone().convert_samples())
+                        .expect("unable to play 6.wav");
+                }
             }
             if machine.out_port5 & 0x8 == 0x8 && machine.last_out_port5 & 0x8 != 0x8 {
-                stream_handle
-                    .play_raw(buffed[7].clone().convert_samples())
-                    .expect("unable to play: sounds/7.wav");
+                if buffed[7].is_some() {
+                    let buf = buffed[7].as_ref().unwrap();
+                    stream_handle
+                        .play_raw(buf.clone().convert_samples())
+                        .expect("unable to play 7.wav");
+                }
             }
             if machine.out_port5 & 0x10 == 0x10 && machine.last_out_port5 & 0x10 != 0x10 {
-                stream_handle
-                    .play_raw(buffed[8].clone().convert_samples())
-                    .expect("unable to play: sounds/8.wav");
+                if buffed[8].is_some() {
+                    let buf = buffed[8].as_ref().unwrap();
+                    stream_handle
+                        .play_raw(buf.clone().convert_samples())
+                        .expect("unable to play 8.wav");
+                }
             }
             machine.last_out_port5 = machine.out_port5;
         }
